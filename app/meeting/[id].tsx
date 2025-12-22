@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Modal,
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
@@ -27,9 +28,15 @@ import {
   ChevronUp,
   Clock,
   DollarSign,
+  Plus,
+  CheckCircle2,
+  Circle,
+  Bell,
+  Calendar,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
+import { useTasks, useMeetingTasks } from "@/contexts/TaskContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 
@@ -64,6 +71,8 @@ export default function MeetingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting, isLoading } = useMeetingDetails(id || null);
   const { deleteMeeting } = useMeetings();
+  const { data: tasks = [], isLoading: tasksLoading } = useMeetingTasks(id || null);
+  const { createTask, updateTask, deleteTask, isCreating } = useTasks();
 
   const [showMenu, setShowMenu] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -71,6 +80,13 @@ export default function MeetingDetailScreen() {
   const [showSearch, setShowSearch] = useState(false);
   const [expandedSummary, setExpandedSummary] = useState(true);
   const [expandedTranscript, setExpandedTranscript] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState(true);
+  const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [newTaskOwner, setNewTaskOwner] = useState("");
+  const [newTaskReminderDate, setNewTaskReminderDate] = useState("");
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -254,6 +270,79 @@ export default function MeetingDetailScreen() {
     updatedActions[actionIndex] = { ...updatedActions[actionIndex], completed };
   };
 
+  const handleToggleTask = async (taskId: string, completed: boolean) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    try {
+      await updateTask({ taskId, updates: { completed } });
+    } catch (error) {
+      console.error('[MeetingDetail] Error toggling task:', error);
+    }
+  };
+
+  const handleDeleteTask = (taskId: string) => {
+    const performDelete = async () => {
+      try {
+        await deleteTask(taskId);
+      } catch (error) {
+        console.error('[MeetingDetail] Error deleting task:', error);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (confirm("Delete this task?")) {
+        performDelete();
+      }
+    } else {
+      Alert.alert(
+        "Delete Task",
+        "Are you sure you want to delete this task?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: performDelete },
+        ]
+      );
+    }
+  };
+
+  const handleAddTask = async () => {
+    if (!id || !newTaskTitle.trim()) return;
+
+    try {
+      await createTask({
+        meeting_id: id,
+        title: newTaskTitle.trim(),
+        description: newTaskDescription.trim() || null,
+        priority: newTaskPriority,
+        owner: newTaskOwner.trim() || null,
+        reminder_time: newTaskReminderDate || null,
+      });
+
+      setShowAddTaskModal(false);
+      setNewTaskTitle("");
+      setNewTaskDescription("");
+      setNewTaskPriority('medium');
+      setNewTaskOwner("");
+      setNewTaskReminderDate("");
+
+      if (Platform.OS !== "web") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error) {
+      console.error('[MeetingDetail] Error adding task:', error);
+    }
+  };
+
+  const getPriorityColor = (priority: 'low' | 'medium' | 'high') => {
+    switch (priority) {
+      case 'high': return Colors.error;
+      case 'medium': return Colors.warning;
+      case 'low': return Colors.success;
+      default: return Colors.textMuted;
+    }
+  };
+
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -407,6 +496,109 @@ export default function MeetingDetailScreen() {
           </View>
         )}
 
+        <Pressable
+          style={styles.sectionHeader}
+          onPress={() => setExpandedTasks(!expandedTasks)}
+        >
+          <Text style={styles.sectionTitle}>Tasks ({tasks.length})</Text>
+          <View style={styles.taskHeaderActions}>
+            <Pressable
+              style={styles.addTaskButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                setShowAddTaskModal(true);
+              }}
+            >
+              <Plus size={16} color={Colors.accentLight} />
+            </Pressable>
+            {expandedTasks ? (
+              <ChevronUp size={20} color={Colors.text} />
+            ) : (
+              <ChevronDown size={20} color={Colors.text} />
+            )}
+          </View>
+        </Pressable>
+
+        {expandedTasks && (
+          <View style={styles.sectionContent}>
+            {tasksLoading ? (
+              <ActivityIndicator size="small" color={Colors.accentLight} />
+            ) : tasks.length > 0 ? (
+              tasks.map((task) => (
+                <View key={task.id} style={styles.taskItem}>
+                  <Pressable
+                    style={styles.taskCheckbox}
+                    onPress={() => handleToggleTask(task.id, !task.completed)}
+                  >
+                    {task.completed ? (
+                      <CheckCircle2 size={20} color={Colors.success} fill={Colors.success} />
+                    ) : (
+                      <Circle size={20} color={Colors.border} />
+                    )}
+                  </Pressable>
+                  <View style={styles.taskContent}>
+                    <View style={styles.taskHeader}>
+                      <Text
+                        style={[
+                          styles.taskTitle,
+                          task.completed && styles.taskTitleCompleted,
+                        ]}
+                      >
+                        {task.title}
+                      </Text>
+                      <View
+                        style={[
+                          styles.priorityBadge,
+                          { backgroundColor: `${getPriorityColor(task.priority)}20` },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.priorityText,
+                            { color: getPriorityColor(task.priority) },
+                          ]}
+                        >
+                          {task.priority}
+                        </Text>
+                      </View>
+                    </View>
+                    {task.description && (
+                      <Text style={styles.taskDescription}>{task.description}</Text>
+                    )}
+                    <View style={styles.taskMeta}>
+                      {task.owner && (
+                        <View style={styles.taskMetaItem}>
+                          <Text style={styles.taskMetaText}>{task.owner}</Text>
+                        </View>
+                      )}
+                      {task.reminder_time && (
+                        <View style={styles.taskMetaItem}>
+                          <Bell size={10} color={Colors.textMuted} />
+                          <Text style={styles.taskMetaText}>
+                            {new Date(task.reminder_time).toLocaleDateString()}
+                          </Text>
+                        </View>
+                      )}
+                      <Pressable
+                        style={styles.deleteTaskButton}
+                        onPress={() => handleDeleteTask(task.id)}
+                      >
+                        <Trash2 size={12} color={Colors.error} />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.noDataText}>
+                {meeting.status === "processing"
+                  ? "Tasks are being generated..."
+                  : "No tasks yet. Tap + to add one."}
+              </Text>
+            )}
+          </View>
+        )}
+
         {aiOutput?.follow_up_actions && aiOutput.follow_up_actions.length > 0 && (
           <View style={styles.actionsList}>
             <Text style={styles.sectionTitleStatic}>Action Items</Text>
@@ -509,6 +701,118 @@ export default function MeetingDetailScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      <Modal
+        visible={showAddTaskModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddTaskModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Task</Text>
+              <Pressable onPress={() => setShowAddTaskModal(false)}>
+                <X size={24} color={Colors.text} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalForm}>
+              <Text style={styles.inputLabel}>Title *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Task title"
+                placeholderTextColor={Colors.textMuted}
+                value={newTaskTitle}
+                onChangeText={setNewTaskTitle}
+                autoFocus
+              />
+
+              <Text style={styles.inputLabel}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="Task description"
+                placeholderTextColor={Colors.textMuted}
+                value={newTaskDescription}
+                onChangeText={setNewTaskDescription}
+                multiline
+                numberOfLines={3}
+              />
+
+              <Text style={styles.inputLabel}>Priority</Text>
+              <View style={styles.prioritySelector}>
+                {(['low', 'medium', 'high'] as const).map((priority) => (
+                  <Pressable
+                    key={priority}
+                    style={[
+                      styles.priorityOption,
+                      newTaskPriority === priority && styles.priorityOptionActive,
+                      { borderColor: getPriorityColor(priority) },
+                    ]}
+                    onPress={() => setNewTaskPriority(priority)}
+                  >
+                    <Text
+                      style={[
+                        styles.priorityOptionText,
+                        newTaskPriority === priority && {
+                          color: getPriorityColor(priority),
+                          fontWeight: '600' as const,
+                        },
+                      ]}
+                    >
+                      {priority}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.inputLabel}>Owner</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Who's responsible?"
+                placeholderTextColor={Colors.textMuted}
+                value={newTaskOwner}
+                onChangeText={setNewTaskOwner}
+              />
+
+              <Text style={styles.inputLabel}>Reminder Date (Optional)</Text>
+              <View style={styles.reminderInput}>
+                <Calendar size={16} color={Colors.textMuted} />
+                <TextInput
+                  style={styles.reminderTextInput}
+                  placeholder="YYYY-MM-DD HH:MM"
+                  placeholderTextColor={Colors.textMuted}
+                  value={newTaskReminderDate}
+                  onChangeText={setNewTaskReminderDate}
+                />
+              </View>
+              <Text style={styles.helpText}>
+                Format: 2025-12-31 14:30 (for reminder notification)
+              </Text>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowAddTaskModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButton, styles.saveButton, !newTaskTitle.trim() && styles.saveButtonDisabled]}
+                onPress={handleAddTask}
+                disabled={!newTaskTitle.trim() || isCreating}
+              >
+                {isCreating ? (
+                  <ActivityIndicator size="small" color={Colors.background} />
+                ) : (
+                  <Text style={styles.saveButtonText}>Add Task</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {meeting.audio_path && (
         <View style={styles.audioBar}>
@@ -918,5 +1222,211 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     minWidth: 80,
     textAlign: 'right',
+  },
+  taskHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addTaskButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: `${Colors.accentLight}15`,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  taskItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  taskCheckbox: {
+    marginRight: 12,
+    marginTop: 2,
+  },
+  taskContent: {
+    flex: 1,
+  },
+  taskHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  taskTitle: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  taskTitleCompleted: {
+    textDecorationLine: 'line-through',
+    color: Colors.textMuted,
+  },
+  taskDescription: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  taskMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  taskMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  taskMetaText: {
+    fontSize: 11,
+    color: Colors.textMuted,
+  },
+  deleteTaskButton: {
+    marginLeft: 'auto',
+    padding: 4,
+  },
+  priorityBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  priorityText: {
+    fontSize: 10,
+    fontWeight: '600' as const,
+    textTransform: 'uppercase',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700' as const,
+    color: Colors.text,
+  },
+  modalForm: {
+    padding: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  input: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    color: Colors.text,
+  },
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  prioritySelector: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  priorityOption: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 2,
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+  },
+  priorityOptionActive: {
+    backgroundColor: Colors.surfaceLight,
+  },
+  priorityOptionText: {
+    fontSize: 13,
+    fontWeight: '500' as const,
+    color: Colors.textMuted,
+    textTransform: 'capitalize',
+  },
+  reminderInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  reminderTextInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 15,
+    color: Colors.text,
+  },
+  helpText: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 4,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    padding: 20,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelButtonText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  saveButton: {
+    backgroundColor: Colors.accentLight,
+  },
+  saveButtonDisabled: {
+    opacity: 0.5,
+  },
+  saveButtonText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.background,
   },
 });

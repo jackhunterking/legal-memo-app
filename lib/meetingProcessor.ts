@@ -26,6 +26,14 @@ const SupportSchema = z.object({
   end_ms: z.number(),
 });
 
+const TaskSchema = z.object({
+  title: z.string().describe('Short, actionable task description'),
+  description: z.string().nullable().optional().describe('Detailed description of the task'),
+  priority: z.enum(['low', 'medium', 'high']).optional().default('medium'),
+  owner: z.string().nullable().optional().describe('Person responsible for the task'),
+  suggested_reminder: z.string().nullable().optional().describe('Suggested reminder date/time in ISO format, or null'),
+});
+
 const AIOutputSchema = z.object({
   meeting_overview: MeetingOverviewSchema,
   key_facts_stated: z.array(z.object({
@@ -60,6 +68,7 @@ const AIOutputSchema = z.object({
     support: z.array(SupportSchema).optional().default([]),
     certainty: z.enum(['explicit', 'unclear']).optional().default('explicit'),
   })),
+  tasks: z.array(TaskSchema).optional().default([]).describe('List of actionable tasks extracted from the meeting'),
 });
 
 export async function processMeeting(
@@ -145,6 +154,12 @@ Provide a comprehensive analysis including:
 7. Risks or concerns raised
 8. Follow-up actions with owners
 9. Open questions that remain
+10. **Actionable tasks** - Extract specific, concrete tasks that need to be completed based on the meeting discussion. For each task:
+   - Write a clear, actionable title (e.g., "Draft contract amendment", "Schedule follow-up call", "Review documents")
+   - Provide a brief description if needed
+   - Assign priority (low/medium/high) based on urgency and importance
+   - Identify the owner (person responsible) if mentioned
+   - Suggest a reminder date/time if a deadline or timeframe was mentioned (use ISO format)
 
 If the transcript is empty or unclear, provide reasonable defaults indicating limited information was available.`;
 
@@ -170,6 +185,7 @@ If the transcript is empty or unclear, provide reasonable defaults indicating li
         risks_or_concerns_raised: [],
         follow_up_actions: [],
         open_questions: [],
+        tasks: [],
       };
     }
     
@@ -198,6 +214,40 @@ If the transcript is empty or unclear, provide reasonable defaults indicating li
     
     if (aiError) {
       console.error('[MeetingProcessor] Failed to save AI output:', aiError);
+    }
+
+    // Save generated tasks to database
+    if (aiOutput.tasks && aiOutput.tasks.length > 0) {
+      console.log('[MeetingProcessor] Saving', aiOutput.tasks.length, 'tasks');
+      
+      const { data: meetingData } = await supabase
+        .from('meetings')
+        .select('user_id')
+        .eq('id', meetingId)
+        .single();
+
+      if (meetingData?.user_id) {
+        const tasksToInsert = aiOutput.tasks.map((task) => ({
+          meeting_id: meetingId,
+          user_id: meetingData.user_id,
+          title: task.title,
+          description: task.description || null,
+          priority: task.priority || 'medium',
+          owner: task.owner || null,
+          reminder_time: task.suggested_reminder || null,
+          completed: false,
+        }));
+
+        const { error: tasksError } = await supabase
+          .from('meeting_tasks')
+          .insert(tasksToInsert);
+
+        if (tasksError) {
+          console.error('[MeetingProcessor] Failed to save tasks:', tasksError);
+        } else {
+          console.log('[MeetingProcessor] Tasks saved successfully');
+        }
+      }
     }
     
     // Step 5: Update search index

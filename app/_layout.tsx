@@ -7,6 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import { ContactProvider } from "@/contexts/ContactContext";
+import { TaskProvider } from "@/contexts/TaskContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -51,8 +52,10 @@ export default function RootLayout() {
         <AuthProvider>
           <MeetingProvider>
             <ContactProvider>
-              <StatusBar style="light" />
-              <RootLayoutNav />
+              <TaskProvider>
+                <StatusBar style="light" />
+                <RootLayoutNav />
+              </TaskProvider>
             </ContactProvider>
           </MeetingProvider>
         </AuthProvider>
