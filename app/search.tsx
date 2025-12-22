@@ -28,7 +28,7 @@ export default function SearchScreen() {
     return meetings.filter((meeting) => {
       const title = (meeting.title_override || meeting.auto_title).toLowerCase();
       const clientName = meeting.client_name?.toLowerCase() || "";
-      const meetingType = meeting.meeting_type.toLowerCase();
+      const meetingType = meeting.meeting_type?.name?.toLowerCase() || "";
       
       return (
         title.includes(searchTerm) ||
@@ -117,7 +117,7 @@ export default function SearchScreen() {
                     {title}
                   </Text>
                   <Text style={styles.resultMeta}>
-                    {date.toLocaleDateString()} • {item.meeting_type}
+                    {date.toLocaleDateString()} • {item.meeting_type?.name || 'Unknown'}
                   </Text>
                 </View>
                 <ChevronRight size={20} color={Colors.textMuted} />

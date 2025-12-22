@@ -12,6 +12,7 @@ import {
   Modal,
   Share,
   Switch,
+  InteractionManager,
 } from "react-native";
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Audio, AVPlaybackStatus } from "expo-av";
@@ -1263,7 +1264,12 @@ const MeetingActionsSheet = ({
               style={styles.actionSheetItem}
               onPress={() => {
                 onClose();
-                setTimeout(onShare, 300);
+                // Call share after a minimal delay to ensure modal starts closing
+                // but preserve the user interaction chain for native Share API
+                // Using setTimeout with 0ms queues it in the next event loop tick
+                setTimeout(() => {
+                  onShare();
+                }, 0);
               }}
             >
               <View style={styles.actionSheetIconWrapper}>
@@ -1335,7 +1341,6 @@ export default function MeetingDetailScreen() {
   const [showInsights, setShowInsights] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
-  const [showEditMenu, setShowEditMenu] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [editingTask, setEditingTask] = useState<MeetingTask | null>(null);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
@@ -1715,6 +1720,13 @@ export default function MeetingDetailScreen() {
   };
 
   const handleShare = async () => {
+    // Haptic feedback when share is triggered
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) {
+      // Haptics not available (web)
+    }
+
     const shareText = `
 ${title}
 Date: ${new Date(meeting?.created_at || "").toLocaleDateString()}
@@ -1729,16 +1741,58 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
 
     try {
       if (Platform.OS === "web") {
-        await navigator.clipboard.writeText(shareText);
-        alert("Meeting notes copied to clipboard!");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(shareText);
+          alert("Meeting notes copied to clipboard!");
+        } else {
+          // Fallback for older browsers
+          const textArea = document.createElement("textarea");
+          textArea.value = shareText;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textArea);
+          alert("Meeting notes copied to clipboard!");
+        }
       } else {
-        await Share.share({
+        // Check if Share is available
+        if (!Share || typeof Share.share !== "function") {
+          Alert.alert("Error", "Sharing is not available on this device.");
+          return;
+        }
+
+        // Ensure we have valid content to share
+        if (!shareText || shareText.trim().length === 0) {
+          Alert.alert("Error", "No content available to share.");
+          return;
+        }
+
+        // Use native Share API
+        const shareOptions: { message: string; title?: string; url?: string } = {
           message: shareText,
-          title: title,
-        });
+        };
+
+        // On iOS, title is optional but recommended
+        if (Platform.OS === "ios" && title) {
+          shareOptions.title = title;
+        }
+
+        const result = await Share.share(shareOptions);
+
+        // Log result for debugging (Share.share() resolves even when user cancels)
+        if (result.action) {
+          console.log("[Share] Action:", result.action);
+          if (result.activityType) {
+            console.log("[Share] Activity type:", result.activityType);
+          }
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("[Share] Error:", error);
+      Alert.alert(
+        "Share Error",
+        error?.message || "Failed to share meeting notes. Please try again."
+      );
     }
   };
 
@@ -1767,65 +1821,15 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
           <Text style={styles.headerTitle} numberOfLines={1}>
             {title}
           </Text>
-          <View style={styles.headerMeta}>
-            <Text style={styles.headerSubtitle}>
-              {new Date(meeting.created_at).toLocaleDateString()}
-            </Text>
-            <View style={styles.dot} />
-            <Clock size={12} color={Colors.textMuted} />
-            <Text style={styles.headerSubtitle}>
-              {formatDuration(meeting.duration_seconds)}
-            </Text>
-          </View>
         </View>
-        <Pressable
-          style={styles.headerEditButton}
-          onPress={() => setShowEditMenu(!showEditMenu)}
-        >
-          <Edit3 size={18} color={Colors.text} />
-        </Pressable>
       </View>
-
-      {/* Edit Menu Dropdown */}
-      {showEditMenu && (
-        <View style={styles.editMenuDropdown}>
-          <Pressable
-            style={styles.editMenuItem}
-            onPress={() => {
-              setShowEditMenu(false);
-              router.push(`/edit-meeting?id=${id}` as any);
-            }}
-          >
-            <Edit3 size={18} color={Colors.text} />
-            <Text style={styles.editMenuItemText}>Edit Meeting</Text>
-          </Pressable>
-          <Pressable style={styles.editMenuItem} onPress={handleDelete}>
-            <Trash2 size={18} color={Colors.error} />
-            <Text style={[styles.editMenuItemText, { color: Colors.error }]}>
-              Delete
-            </Text>
-          </Pressable>
-        </View>
-      )}
 
       {/* Scrollable Content */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Meeting Details Section */}
         <View style={styles.detailsSection}>
           {/* Time Logged */}
-          <Pressable
-            style={styles.detailRow}
-            onPress={() => {
-              const hours = Math.floor(meeting.duration_seconds / 3600);
-              const minutes = Math.floor((meeting.duration_seconds % 3600) / 60);
-              setEditingTimeHours(hours.toString());
-              setEditingTimeMinutes(minutes.toString());
-              setShowTimeEditor(true);
-              setShowContactDropdown(false);
-              setShowMeetingTypeDropdown(false);
-              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-          >
+          <View style={styles.detailRow}>
             <View style={styles.detailIconWrapper}>
               <Clock size={20} color={Colors.accentLight} />
             </View>
@@ -1833,8 +1837,24 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
               <Text style={styles.detailLabel}>Time Logged</Text>
               <Text style={styles.detailValue}>{formatDuration(meeting.duration_seconds)}</Text>
             </View>
-            <Edit2 size={18} color={Colors.textMuted} />
-          </Pressable>
+            <Pressable
+              style={styles.actionEditButtonNew}
+              onPress={() => {
+                const hours = Math.floor(meeting.duration_seconds / 3600);
+                const minutes = Math.floor((meeting.duration_seconds % 3600) / 60);
+                setEditingTimeHours(hours.toString());
+                setEditingTimeMinutes(minutes.toString());
+                setShowTimeEditor(true);
+                setShowContactDropdown(false);
+                setShowMeetingTypeDropdown(false);
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+              }}
+            >
+              <Text style={styles.actionEditButtonText}>Edit</Text>
+            </Pressable>
+          </View>
 
           {showTimeEditor && (
             <View style={styles.timeEditorContainer}>
@@ -2373,55 +2393,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: Colors.text,
     marginBottom: 2,
-  },
-  headerMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: Colors.textMuted,
-  },
-  dot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: Colors.textMuted,
-  },
-  headerEditButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.surfaceLight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  editMenuDropdown: {
-    position: "absolute",
-    top: 60,
-    right: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    zIndex: 100,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
-    minWidth: 160,
-  },
-  editMenuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    gap: 10,
-  },
-  editMenuItemText: {
-    fontSize: 14,
-    color: Colors.text,
   },
   content: {
     flex: 1,

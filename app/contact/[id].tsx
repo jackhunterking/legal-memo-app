@@ -47,7 +47,8 @@ export default function ContactDetailScreen() {
     }, 0);
 
     const meetingsByType = linkedMeetings.reduce((acc, m) => {
-      acc[m.meeting_type] = (acc[m.meeting_type] || 0) + 1;
+      const typeName = m.meeting_type?.name || 'Unknown';
+      acc[typeName] = (acc[typeName] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
@@ -300,7 +301,7 @@ export default function ContactDetailScreen() {
                     <View style={styles.meetingType}>
                       <View style={styles.meetingTypeDot} />
                       <Text style={styles.meetingTypeText} numberOfLines={1}>
-                        {meeting.meeting_type}
+                        {meeting.meeting_type?.name || 'Unknown'}
                       </Text>
                     </View>
                     
