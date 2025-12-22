@@ -125,17 +125,35 @@ export default function MeetingDetailScreen() {
       setAudioLoadError(false);
       console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
 
-      const { data, error: urlError } = await supabase.storage
+      // Download the audio file as a blob first to avoid streaming issues on iOS
+      // Error -11850 occurs when iOS can't stream from URLs that don't support proper range requests
+      const { data: audioBlob, error: downloadError } = await supabase.storage
         .from('meeting-audio')
-        .createSignedUrl(meeting.audio_path, 3600);
+        .download(meeting.audio_path);
 
-      if (urlError || !data?.signedUrl) {
-        console.error('[AudioPlayer] Error getting signed URL:', urlError);
+      if (downloadError || !audioBlob) {
+        console.error('[AudioPlayer] Error downloading audio:', downloadError);
         setAudioLoadError(true);
         return;
       }
 
-      console.log('[AudioPlayer] Audio URL obtained successfully');
+      console.log('[AudioPlayer] Audio downloaded successfully, size:', audioBlob.size);
+
+      // Convert blob to base64 data URI for playback
+      const reader = new FileReader();
+      const audioUri = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to convert audio to base64'));
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioBlob);
+      });
+
+      console.log('[AudioPlayer] Audio converted to data URI');
 
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -143,7 +161,7 @@ export default function MeetingDetailScreen() {
       });
 
       const { sound } = await Audio.Sound.createAsync(
-        { uri: data.signedUrl },
+        { uri: audioUri },
         { shouldPlay: false, progressUpdateIntervalMillis: 100 },
         onPlaybackStatusUpdate
       );
@@ -825,6 +843,11 @@ export default function MeetingDetailScreen() {
             <View style={styles.audioErrorContainer}>
               <AlertTriangle size={16} color={Colors.warning} />
               <Text style={styles.audioErrorText}>Audio unavailable</Text>
+            </View>
+          ) : isAudioLoading ? (
+            <View style={styles.audioErrorContainer}>
+              <ActivityIndicator size="small" color={Colors.accentLight} />
+              <Text style={styles.audioErrorText}>Loading audio...</Text>
             </View>
           ) : (
             <>
