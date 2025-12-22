@@ -1621,7 +1621,7 @@ export default function MeetingDetailScreen() {
     const performDelete = async () => {
       try {
         await deleteMeeting(id);
-        router.replace("/(tabs)/home");
+        router.replace("/(tabs)/meetings");
       } catch (err) {
         console.error("[MeetingDetail] Delete error:", err);
       }
