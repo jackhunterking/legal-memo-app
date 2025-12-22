@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,9 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+
 } from "react-native";
+import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -30,6 +32,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
+import { supabase } from "@/lib/supabase";
 
 type TabKey = "summary" | "transcript" | "actions" | "billing";
 
@@ -71,8 +74,131 @@ export default function MeetingDetailScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
 
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [positionMillis, setPositionMillis] = useState(0);
+  const [durationMillis, setDurationMillis] = useState(0);
+  const progressBarRef = useRef<View>(null);
+  const [progressBarWidth, setProgressBarWidth] = useState(0);
+
   const title = meeting?.title_override || meeting?.auto_title || "Meeting";
   const aiOutput = meeting?.ai_output;
+
+  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
+    if (!status.isLoaded) {
+      if (status.error) {
+        console.error('[AudioPlayer] Playback error:', status.error);
+      }
+      return;
+    }
+    
+    setIsPlaying(status.isPlaying);
+    setPositionMillis(status.positionMillis || 0);
+    setDurationMillis(status.durationMillis || 0);
+
+    if (status.didJustFinish) {
+      setIsPlaying(false);
+      setPositionMillis(0);
+    }
+  }, []);
+
+  const loadAudio = useCallback(async () => {
+    if (!meeting?.audio_path || soundRef.current) return;
+
+    try {
+      setIsAudioLoading(true);
+      console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
+
+      const { data } = supabase.storage
+        .from('recordings')
+        .getPublicUrl(meeting.audio_path);
+
+      if (!data?.publicUrl) {
+        console.error('[AudioPlayer] No public URL found');
+        return;
+      }
+
+      console.log('[AudioPlayer] Audio URL:', data.publicUrl);
+
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: data.publicUrl },
+        { shouldPlay: false, progressUpdateIntervalMillis: 100 },
+        onPlaybackStatusUpdate
+      );
+
+      soundRef.current = sound;
+      console.log('[AudioPlayer] Audio loaded successfully');
+    } catch (error) {
+      console.error('[AudioPlayer] Error loading audio:', error);
+    } finally {
+      setIsAudioLoading(false);
+    }
+  }, [meeting?.audio_path, onPlaybackStatusUpdate]);
+
+  useEffect(() => {
+    if (meeting?.audio_path) {
+      loadAudio();
+    }
+
+    return () => {
+      if (soundRef.current) {
+        console.log('[AudioPlayer] Unloading sound');
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    };
+  }, [meeting?.audio_path, loadAudio]);
+
+  const handlePlayPause = async () => {
+    if (!soundRef.current) {
+      await loadAudio();
+      return;
+    }
+
+    try {
+      if (isPlaying) {
+        await soundRef.current.pauseAsync();
+      } else {
+        await soundRef.current.playAsync();
+      }
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error('[AudioPlayer] Play/pause error:', error);
+    }
+  };
+
+  const handleSeek = async (event: { nativeEvent: { locationX: number } }) => {
+    if (!soundRef.current || !durationMillis || !progressBarWidth) return;
+
+    const x = event.nativeEvent.locationX;
+    const percentage = Math.max(0, Math.min(1, x / progressBarWidth));
+    const seekPosition = percentage * durationMillis;
+
+    try {
+      await soundRef.current.setPositionAsync(seekPosition);
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error('[AudioPlayer] Seek error:', error);
+    }
+  };
+
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const progress = durationMillis > 0 ? (positionMillis / durationMillis) * 100 : 0;
 
   const filteredTranscript = useMemo(() => {
     if (!meeting?.transcript_segments || !searchQuery.trim()) {
@@ -453,19 +579,34 @@ export default function MeetingDetailScreen() {
         <View style={styles.audioBar}>
           <Pressable
             style={styles.playButton}
-            onPress={() => setIsPlaying(!isPlaying)}
+            onPress={handlePlayPause}
+            disabled={isAudioLoading}
           >
-            {isPlaying ? (
+            {isAudioLoading ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : isPlaying ? (
               <Pause size={20} color={Colors.text} fill={Colors.text} />
             ) : (
               <Play size={20} color={Colors.text} fill={Colors.text} />
             )}
           </Pressable>
-          <View style={styles.audioProgress}>
-            <View style={styles.audioProgressBar} />
-          </View>
+          
+          <Pressable
+            style={styles.audioProgressContainer}
+            onPress={handleSeek}
+          >
+            <View
+              ref={progressBarRef}
+              style={styles.audioProgress}
+              onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
+            >
+              <View style={[styles.audioProgressBar, { width: `${progress}%` }]} />
+              <View style={[styles.audioProgressThumb, { left: `${progress}%` }]} />
+            </View>
+          </Pressable>
+
           <Text style={styles.audioTime}>
-            {formatDuration(meeting.duration_seconds)}
+            {formatTime(positionMillis)} / {formatTime(durationMillis || (meeting.duration_seconds * 1000))}
           </Text>
         </View>
       )}
@@ -798,22 +939,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  audioProgress: {
+  audioProgressContainer: {
     flex: 1,
+    height: 32,
+    justifyContent: 'center',
+  },
+  audioProgress: {
     height: 4,
     backgroundColor: Colors.surfaceLight,
     borderRadius: 2,
+    position: 'relative',
   },
   audioProgressBar: {
-    width: "30%",
-    height: "100%",
+    height: '100%',
     backgroundColor: Colors.accentLight,
     borderRadius: 2,
   },
+  audioProgressThumb: {
+    position: 'absolute',
+    top: -4,
+    marginLeft: -6,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.accentLight,
+  },
   audioTime: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMuted,
-    minWidth: 50,
-    textAlign: "right",
+    minWidth: 80,
+    textAlign: 'right',
   },
 });
