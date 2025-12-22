@@ -52,9 +52,7 @@ export default function AuthScreen() {
         router.replace("/home");
       } else {
         await signUp({ email: email.trim(), password });
-        // Profile is automatically created by database trigger
-        // Redirect to onboarding for additional setup
-        router.replace("/onboarding");
+        router.replace({ pathname: "/email-confirmation", params: { email: email.trim() } });
       }
     } catch (err: unknown) {
       console.error("[Auth] Error:", err);
