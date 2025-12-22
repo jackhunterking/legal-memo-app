@@ -89,6 +89,7 @@ export default function MeetingDetailScreen() {
   const [newTaskReminderDate, setNewTaskReminderDate] = useState("");
 
   const soundRef = useRef<Audio.Sound | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioLoadError, setAudioLoadError] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -125,8 +126,8 @@ export default function MeetingDetailScreen() {
       setAudioLoadError(false);
       console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
 
-      // Download the audio file as a blob first to avoid streaming issues on iOS
-      // Error -11850 occurs when iOS can't stream from URLs that don't support proper range requests
+      // Download the audio file as a blob first
+      // This avoids streaming issues on iOS (error -11850) and format issues on web
       const { data: audioBlob, error: downloadError } = await supabase.storage
         .from('meeting-audio')
         .download(meeting.audio_path);
@@ -137,23 +138,33 @@ export default function MeetingDetailScreen() {
         return;
       }
 
-      console.log('[AudioPlayer] Audio downloaded successfully, size:', audioBlob.size);
+      console.log('[AudioPlayer] Audio downloaded successfully, size:', audioBlob.size, 'type:', audioBlob.type);
 
-      // Convert blob to base64 data URI for playback
-      const reader = new FileReader();
-      const audioUri = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => {
-          if (typeof reader.result === 'string') {
-            resolve(reader.result);
-          } else {
-            reject(new Error('Failed to convert audio to base64'));
-          }
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(audioBlob);
-      });
+      let audioUri: string;
 
-      console.log('[AudioPlayer] Audio converted to data URI');
+      if (Platform.OS === 'web') {
+        // On web, use createObjectURL for better format compatibility
+        // This preserves the original audio format and works with various codecs
+        audioUri = URL.createObjectURL(audioBlob);
+        blobUrlRef.current = audioUri; // Store for cleanup
+        console.log('[AudioPlayer] Created blob URL for web playback');
+      } else {
+        // On native (iOS/Android), convert blob to base64 data URI
+        // This ensures proper playback on iOS which has strict streaming requirements
+        const reader = new FileReader();
+        audioUri = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            if (typeof reader.result === 'string') {
+              resolve(reader.result);
+            } else {
+              reject(new Error('Failed to convert audio to base64'));
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(audioBlob);
+        });
+        console.log('[AudioPlayer] Audio converted to data URI for native playback');
+      }
 
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -187,6 +198,11 @@ export default function MeetingDetailScreen() {
         console.log('[AudioPlayer] Unloading sound');
         soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
+      }
+      // Clean up blob URL on web to prevent memory leaks
+      if (blobUrlRef.current && Platform.OS === 'web') {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
       }
     };
   }, [meeting?.audio_path, meeting?.status, loadAudio]);

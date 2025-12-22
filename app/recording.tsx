@@ -179,33 +179,38 @@ export default function RecordingScreen() {
         updates: { status: "uploading" },
       });
 
-      const audioPath = `${user?.id}/${meetingId}/audio.m4a`;
-
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      // Determine file extension and content type based on platform
+      // Web browsers typically record in WebM format, native apps use M4A
+      let fileExtension: string;
+      let contentType: string;
+      
       if (Platform.OS === "web") {
-        const response = await fetch(uri);
-        const blob = await response.blob();
-        
-        const { error: uploadError } = await supabase.storage
-          .from("meeting-audio")
-          .upload(audioPath, blob, {
-            contentType: "audio/mp4",
-            upsert: true,
-          });
-
-        if (uploadError) throw uploadError;
+        // Web browsers record in WebM format (especially Chrome)
+        // Use the blob's actual type if available, fallback to webm
+        contentType = blob.type || "audio/webm";
+        fileExtension = contentType.includes("webm") ? "webm" : 
+                        contentType.includes("mp4") ? "m4a" : 
+                        contentType.includes("ogg") ? "ogg" : "webm";
+        console.log("[Recording] Web audio format:", contentType);
       } else {
-        const response = await fetch(uri);
-        const blob = await response.blob();
-
-        const { error: uploadError } = await supabase.storage
-          .from("meeting-audio")
-          .upload(audioPath, blob, {
-            contentType: "audio/mp4",
-            upsert: true,
-          });
-
-        if (uploadError) throw uploadError;
+        // Native (iOS/Android) uses M4A format
+        contentType = "audio/mp4";
+        fileExtension = "m4a";
       }
+      
+      const audioPath = `${user?.id}/${meetingId}/audio.${fileExtension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("meeting-audio")
+        .upload(audioPath, blob, {
+          contentType,
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
 
       console.log("[Recording] Upload complete");
 
