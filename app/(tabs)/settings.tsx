@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { DollarSign, LogOut, Trash2, ChevronRight, Info } from "lucide-react-native";
+import { DollarSign, LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
@@ -27,6 +27,10 @@ export default function SettingsScreen() {
   const [defaultBillable, setDefaultBillable] = useState(
     profile?.last_billable_setting ?? false
   );
+
+  const [featureRequest, setFeatureRequest] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showThankYou, setShowThankYou] = useState(false);
 
   const handleSaveRate = async () => {
     const rate = parseFloat(hourlyRate);
@@ -77,6 +81,36 @@ export default function SettingsScreen() {
         { text: "Sign Out", onPress: performSignOut },
       ]);
     }
+  };
+
+  const handleSubmitFeatureRequest = async () => {
+    if (!featureRequest.trim()) {
+      Alert.alert(
+        "Oops!",
+        "Please write down your idea before sending it to us."
+      );
+      return;
+    }
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    setIsSubmitting(true);
+
+    // Simulate sending (in production, this would send to your backend)
+    setTimeout(() => {
+      console.log("[Settings] Feature request submitted:", featureRequest);
+      setIsSubmitting(false);
+      setFeatureRequest("");
+      setShowThankYou(true);
+
+      setTimeout(() => setShowThankYou(false), 4000);
+
+      if (Platform.OS !== "web") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    }, 1000);
   };
 
   const handleDeleteAccount = () => {
@@ -182,6 +216,53 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.settingValue}>1.0.0</Text>
           </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>We&apos;d Love to Hear From You</Text>
+        <View style={styles.featureSection}>
+          <View style={styles.featureHeader}>
+            <MessageCircleHeart size={28} color={Colors.accent} />
+            <Text style={styles.featureTitle}>Got an idea? Tell us!</Text>
+          </View>
+          <Text style={styles.featureDescription}>
+            Is there something you wish this app could do? We&apos;re always looking for ways to make things easier for you. Just write it down below — no tech talk needed!
+          </Text>
+          
+          {showThankYou ? (
+            <View style={styles.thankYouBox}>
+              <Text style={styles.thankYouText}>🎉 Thank you so much!</Text>
+              <Text style={styles.thankYouSubtext}>
+                We got your idea and we really appreciate you taking the time to share it with us.
+              </Text>
+            </View>
+          ) : (
+            <>
+              <TextInput
+                style={styles.featureInput}
+                placeholder="For example: I'd love a way to share recordings with my family..."
+                placeholderTextColor={Colors.textMuted}
+                value={featureRequest}
+                onChangeText={setFeatureRequest}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+              <Pressable
+                style={({ pressed }) => [
+                  styles.submitButton,
+                  pressed && styles.submitButtonPressed,
+                  isSubmitting && styles.submitButtonDisabled,
+                ]}
+                onPress={handleSubmitFeatureRequest}
+                disabled={isSubmitting}
+              >
+                <Send size={18} color={Colors.text} />
+                <Text style={styles.submitButtonText}>
+                  {isSubmitting ? "Sending..." : "Send My Idea"}
+                </Text>
+              </Pressable>
+            </>
+          )}
         </View>
 
         <Text style={styles.disclaimer}>
@@ -299,5 +380,80 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 16,
     paddingVertical: 32,
+  },
+  featureSection: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  featureHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  featureTitle: {
+    fontSize: 20,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  featureDescription: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  featureInput: {
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minHeight: 100,
+    marginBottom: 14,
+  },
+  submitButton: {
+    backgroundColor: Colors.accent,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  submitButtonPressed: {
+    opacity: 0.85,
+  },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
+  submitButtonText: {
+    fontSize: 16,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  thankYouBox: {
+    backgroundColor: "rgba(52, 199, 89, 0.15)",
+    borderRadius: 12,
+    padding: 20,
+    alignItems: "center",
+  },
+  thankYouText: {
+    fontSize: 18,
+    fontWeight: "600" as const,
+    color: Colors.success || "#34C759",
+    marginBottom: 8,
+  },
+  thankYouSubtext: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 20,
   },
 });

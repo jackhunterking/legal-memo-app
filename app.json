@@ -34,7 +34,8 @@
       },
       "package": "app.rork.legal_meeting_assistant",
       "permissions": [
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "RECORD_AUDIO"
       ]
     },
     "web": {
@@ -58,6 +59,12 @@
       ],
       [
         "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
+        }
+      ],
+      [
+        "expo-av",
         {
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
         }
