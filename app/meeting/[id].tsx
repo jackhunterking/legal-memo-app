@@ -125,17 +125,17 @@ export default function MeetingDetailScreen() {
       setAudioLoadError(false);
       console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
 
-      const { data } = supabase.storage
+      const { data, error: urlError } = await supabase.storage
         .from('meeting-audio')
-        .getPublicUrl(meeting.audio_path);
+        .createSignedUrl(meeting.audio_path, 3600);
 
-      if (!data?.publicUrl) {
-        console.error('[AudioPlayer] No public URL found');
+      if (urlError || !data?.signedUrl) {
+        console.error('[AudioPlayer] Error getting signed URL:', urlError);
         setAudioLoadError(true);
         return;
       }
 
-      console.log('[AudioPlayer] Audio URL:', data.publicUrl);
+      console.log('[AudioPlayer] Audio URL obtained successfully');
 
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -143,7 +143,7 @@ export default function MeetingDetailScreen() {
       });
 
       const { sound } = await Audio.Sound.createAsync(
-        { uri: data.publicUrl },
+        { uri: data.signedUrl },
         { shouldPlay: false, progressUpdateIntervalMillis: 100 },
         onPlaybackStatusUpdate
       );
