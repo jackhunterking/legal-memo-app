@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,17 +7,20 @@ import {
   FlatList,
   TextInput,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, Plus, Clock, User, Building } from "lucide-react-native";
+import { Search, Plus, Clock, User, Building, Filter } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useContacts } from "@/contexts/ContactContext";
-import type { Meeting, Contact } from "@/types";
+import type { Meeting, Contact, MeetingType } from "@/types";
 import Colors from "@/constants/colors";
 
 type TabView = "meetings" | "contacts";
+type DateFilter = "all" | "today" | "week" | "month";
+type BillableFilter = "all" | "billable" | "non-billable";
 
 const MeetingCard = ({ meeting, onPress }: { meeting: Meeting; onPress: () => void }) => {
   const title = meeting.title_override || meeting.auto_title;
@@ -85,6 +88,10 @@ export default function MeetingsScreen() {
   const { contacts, isLoading: contactsLoading, searchContacts } = useContacts();
   const [activeTab, setActiveTab] = useState<TabView>("meetings");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedMeetingType, setSelectedMeetingType] = useState<MeetingType | "all">("all");
+  const [selectedDateFilter, setSelectedDateFilter] = useState<DateFilter>("all");
+  const [selectedBillableFilter, setSelectedBillableFilter] = useState<BillableFilter>("all");
 
   const handleTabSwitch = (tab: TabView) => {
     if (Platform.OS !== "web") {
@@ -92,7 +99,26 @@ export default function MeetingsScreen() {
     }
     setActiveTab(tab);
     setSearchQuery("");
+    setShowFilters(false);
   };
+
+  const toggleFilters = () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setShowFilters(!showFilters);
+  };
+
+  const clearFilters = () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setSelectedMeetingType("all");
+    setSelectedDateFilter("all");
+    setSelectedBillableFilter("all");
+  };
+
+  const hasActiveFilters = selectedMeetingType !== "all" || selectedDateFilter !== "all" || selectedBillableFilter !== "all";
 
   const handleMeetingPress = (meeting: Meeting) => {
     if (Platform.OS !== "web") {
@@ -115,15 +141,48 @@ export default function MeetingsScreen() {
     router.push("/add-contact");
   };
 
-  const filteredMeetings = meetings.filter((m) => {
-    if (!searchQuery.trim()) return m.status !== "recording";
-    const query = searchQuery.toLowerCase();
-    const title = (m.title_override || m.auto_title).toLowerCase();
-    const clientName = m.client_name?.toLowerCase() || "";
-    return (
-      m.status !== "recording" && (title.includes(query) || clientName.includes(query))
-    );
-  });
+  const filteredMeetings = useMemo(() => {
+    return meetings.filter((m) => {
+      if (m.status === "recording") return false;
+
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const title = (m.title_override || m.auto_title).toLowerCase();
+        const clientName = m.client_name?.toLowerCase() || "";
+        if (!title.includes(query) && !clientName.includes(query)) return false;
+      }
+
+      if (selectedMeetingType !== "all" && m.meeting_type !== selectedMeetingType) {
+        return false;
+      }
+
+      if (selectedBillableFilter !== "all") {
+        if (selectedBillableFilter === "billable" && !m.billable) return false;
+        if (selectedBillableFilter === "non-billable" && m.billable) return false;
+      }
+
+      if (selectedDateFilter !== "all") {
+        const meetingDate = new Date(m.created_at);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        if (selectedDateFilter === "today") {
+          const meetingDay = new Date(meetingDate.getFullYear(), meetingDate.getMonth(), meetingDate.getDate());
+          if (meetingDay.getTime() !== today.getTime()) return false;
+        } else if (selectedDateFilter === "week") {
+          const weekAgo = new Date(today);
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          if (meetingDate < weekAgo) return false;
+        } else if (selectedDateFilter === "month") {
+          const monthAgo = new Date(today);
+          monthAgo.setMonth(monthAgo.getMonth() - 1);
+          if (meetingDate < monthAgo) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [meetings, searchQuery, selectedMeetingType, selectedDateFilter, selectedBillableFilter]);
 
   const filteredContacts = searchQuery.trim()
     ? searchContacts(searchQuery)
@@ -177,7 +236,137 @@ export default function MeetingsScreen() {
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
+        {activeTab === "meetings" && (
+          <Pressable onPress={toggleFilters} style={styles.filterButton}>
+            <Filter size={18} color={hasActiveFilters ? Colors.accentLight : Colors.textMuted} />
+            {hasActiveFilters && <View style={styles.filterDot} />}
+          </Pressable>
+        )}
       </View>
+
+      {activeTab === "meetings" && showFilters && (
+        <View style={styles.filtersPanel}>
+          <View style={styles.filterHeader}>
+            <Text style={styles.filterTitle}>Filters</Text>
+            {hasActiveFilters && (
+              <Pressable onPress={clearFilters} style={styles.clearButton}>
+                <Text style={styles.clearButtonText}>Clear All</Text>
+              </Pressable>
+            )}
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterLabel}>Date</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChips}>
+              {(["all", "today", "week", "month"] as DateFilter[]).map((filter) => (
+                <Pressable
+                  key={filter}
+                  style={[
+                    styles.filterChip,
+                    selectedDateFilter === filter && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    if (Platform.OS !== "web") {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setSelectedDateFilter(filter);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedDateFilter === filter && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {filter === "all" ? "All Time" : filter === "today" ? "Today" : filter === "week" ? "This Week" : "This Month"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterLabel}>Type</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChips}>
+              <Pressable
+                style={[
+                  styles.filterChip,
+                  selectedMeetingType === "all" && styles.filterChipActive,
+                ]}
+                onPress={() => {
+                  if (Platform.OS !== "web") {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  setSelectedMeetingType("all");
+                }}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedMeetingType === "all" && styles.filterChipTextActive,
+                  ]}
+                >
+                  All Types
+                </Text>
+              </Pressable>
+              {(["General Legal Meeting", "Client Consultation", "Case Review", "Settlement Discussion", "Contract Negotiation", "Witness Interview", "Internal Meeting"] as MeetingType[]).map((type) => (
+                <Pressable
+                  key={type}
+                  style={[
+                    styles.filterChip,
+                    selectedMeetingType === type && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    if (Platform.OS !== "web") {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setSelectedMeetingType(type);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedMeetingType === type && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {type}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterLabel}>Billing</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChips}>
+              {(["all", "billable", "non-billable"] as BillableFilter[]).map((filter) => (
+                <Pressable
+                  key={filter}
+                  style={[
+                    styles.filterChip,
+                    selectedBillableFilter === filter && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    if (Platform.OS !== "web") {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setSelectedBillableFilter(filter);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedBillableFilter === filter && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {filter === "all" ? "All" : filter === "billable" ? "Billable" : "Non-Billable"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
 
       {activeTab === "meetings" ? (
         <FlatList
@@ -284,6 +473,84 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     color: Colors.text,
+  },
+  filterButton: {
+    padding: 4,
+    position: "relative" as const,
+  },
+  filterDot: {
+    position: "absolute" as const,
+    top: 2,
+    right: 2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.accentLight,
+  },
+  filtersPanel: {
+    marginHorizontal: 24,
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filterHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  filterTitle: {
+    fontSize: 17,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  clearButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  clearButtonText: {
+    fontSize: 14,
+    color: Colors.accentLight,
+    fontWeight: "600" as const,
+  },
+  filterSection: {
+    marginBottom: 16,
+  },
+  filterLabel: {
+    fontSize: 13,
+    fontWeight: "600" as const,
+    color: Colors.textSecondary,
+    marginBottom: 10,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+  },
+  filterChips: {
+    flexDirection: "row",
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginRight: 8,
+  },
+  filterChipActive: {
+    backgroundColor: Colors.accentLight,
+    borderColor: Colors.accentLight,
+  },
+  filterChipText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: "500" as const,
+  },
+  filterChipTextActive: {
+    color: Colors.text,
+    fontWeight: "600" as const,
   },
   list: {
     paddingHorizontal: 24,
