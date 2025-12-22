@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,10 +12,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { DollarSign, LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send } from "lucide-react-native";
+import { DollarSign, LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
+import { isBiometricSupported, getBiometricType, isBiometricEnabled, setBiometricEnabled } from "@/lib/biometrics";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -31,6 +32,26 @@ export default function SettingsScreen() {
   const [featureRequest, setFeatureRequest] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showThankYou, setShowThankYou] = useState(false);
+
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricType, setBiometricType] = useState<string | null>(null);
+  const [biometricEnabled, setBiometricEnabledState] = useState(false);
+
+  useEffect(() => {
+    const checkBiometric = async () => {
+      const supported = await isBiometricSupported();
+      setBiometricSupported(supported);
+      
+      if (supported) {
+        const type = await getBiometricType();
+        setBiometricType(type);
+        const enabled = await isBiometricEnabled();
+        setBiometricEnabledState(enabled);
+      }
+    };
+    
+    checkBiometric();
+  }, []);
 
   const handleSaveRate = async () => {
     const rate = parseFloat(hourlyRate);
@@ -60,6 +81,32 @@ export default function SettingsScreen() {
       await updateProfile({ last_billable_setting: value });
     } catch (err) {
       console.error("[Settings] Update billable error:", err);
+    }
+  };
+
+  const handleToggleBiometric = async (value: boolean) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    try {
+      await setBiometricEnabled(value);
+      setBiometricEnabledState(value);
+      
+      if (!value) {
+        Alert.alert(
+          "Biometric Login Disabled",
+          "You'll need to enter your password on next login."
+        );
+      } else {
+        Alert.alert(
+          "Biometric Login Enabled",
+          "You can now use " + (biometricType || "biometric") + " to sign in quickly."
+        );
+      }
+    } catch (err) {
+      console.error("[Settings] Toggle biometric error:", err);
+      Alert.alert("Error", "Could not update biometric settings.");
     }
   };
 
@@ -172,6 +219,27 @@ export default function SettingsScreen() {
               thumbColor={Colors.text}
             />
           </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Security</Text>
+        <View style={styles.section}>
+          {biometricSupported && (
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Fingerprint size={20} color={Colors.accentLight} />
+                <View>
+                  <Text style={styles.settingLabel}>{biometricType || "Biometric"} Login</Text>
+                  <Text style={styles.settingHint}>Quick and secure sign in</Text>
+                </View>
+              </View>
+              <Switch
+                value={biometricEnabled}
+                onValueChange={handleToggleBiometric}
+                trackColor={{ false: Colors.surfaceLight, true: Colors.accentLight }}
+                thumbColor={Colors.text}
+              />
+            </View>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>Account</Text>
@@ -336,6 +404,11 @@ const styles = StyleSheet.create({
   settingLabel: {
     fontSize: 16,
     color: Colors.text,
+  },
+  settingHint: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    marginTop: 2,
   },
   settingValue: {
     fontSize: 16,

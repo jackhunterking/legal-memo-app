@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,10 +12,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Mail, Lock, Eye, EyeOff } from "lucide-react-native";
+import { Mail, Lock, Eye, EyeOff, Fingerprint } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
+import { isBiometricSupported, getBiometricType, isBiometricEnabled, authenticateWithBiometrics, getBiometricCredentials, saveBiometricCredentials } from "@/lib/biometrics";
 
 export default function AuthScreen() {
   const router = useRouter();
@@ -26,8 +27,64 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricType, setBiometricType] = useState<string | null>(null);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
 
   const isLoading = isSigningIn || isSigningUp;
+
+  const handleBiometricLogin = useCallback(async () => {
+    try {
+      const authenticated = await authenticateWithBiometrics();
+      
+      if (authenticated) {
+        const credentials = await getBiometricCredentials();
+        
+        if (credentials) {
+          setEmail(credentials.email);
+          setPassword(credentials.encryptedPassword);
+          
+          await signIn({ 
+            email: credentials.email, 
+            password: credentials.encryptedPassword 
+          });
+          
+          router.replace("/home");
+        } else {
+          Alert.alert(
+            "Setup Required",
+            "Please sign in with your password first to enable biometric login."
+          );
+        }
+      }
+    } catch (err: unknown) {
+      console.error("[Auth] Biometric login error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Biometric login failed";
+      if (Platform.OS !== "web") {
+        Alert.alert("Error", errorMessage);
+      }
+    }
+  }, [signIn, router]);
+
+  useEffect(() => {
+    const checkBiometric = async () => {
+      const supported = await isBiometricSupported();
+      if (supported) {
+        const enabled = await isBiometricEnabled();
+        const type = await getBiometricType();
+        setBiometricAvailable(true);
+        setBiometricEnabled(enabled);
+        setBiometricType(type);
+        
+        if (enabled && isLogin) {
+          handleBiometricLogin();
+        }
+      }
+    };
+    
+    checkBiometric();
+  }, [isLogin, handleBiometricLogin]);
 
   const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) {
@@ -49,6 +106,14 @@ export default function AuthScreen() {
     try {
       if (isLogin) {
         await signIn({ email: email.trim(), password });
+        
+        if (biometricAvailable && biometricEnabled) {
+          await saveBiometricCredentials({
+            email: email.trim(),
+            encryptedPassword: password,
+          });
+        }
+        
         router.replace("/home");
       } else {
         await signUp({ email: email.trim(), password });
@@ -146,6 +211,19 @@ export default function AuthScreen() {
                 </Text>
               )}
             </Pressable>
+
+            {isLogin && biometricAvailable && biometricEnabled && (
+              <Pressable
+                style={[styles.biometricButton, isLoading && styles.buttonDisabled]}
+                onPress={handleBiometricLogin}
+                disabled={isLoading}
+              >
+                <Fingerprint size={24} color={Colors.accent} />
+                <Text style={styles.biometricButtonText}>
+                  Sign in with {biometricType || "Biometric"}
+                </Text>
+              </Pressable>
+            )}
           </View>
 
           <View style={styles.footer}>
@@ -249,5 +327,22 @@ const styles = StyleSheet.create({
     color: Colors.accentLight,
     fontSize: 15,
     fontWeight: "600" as const,
+  },
+  biometricButton: {
+    backgroundColor: Colors.surface,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+  },
+  biometricButtonText: {
+    fontSize: 16,
+    fontWeight: "600" as const,
+    color: Colors.text,
   },
 });
