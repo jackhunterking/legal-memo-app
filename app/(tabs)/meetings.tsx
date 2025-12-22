@@ -26,7 +26,7 @@ type BillableFilter = "all" | "billable" | "non-billable";
 const MeetingCard = ({ meeting, onPress }: { meeting: Meeting; onPress: () => void }) => {
   const title = meeting.title_override || meeting.auto_title;
   const date = new Date(meeting.created_at);
-  const duration = Math.floor(meeting.duration_seconds / 60);
+  const duration = Math.ceil(meeting.duration_seconds / 60);
   const typeColor = meeting.meeting_type?.color || Colors.textMuted;
 
   return (
