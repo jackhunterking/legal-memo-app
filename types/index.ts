@@ -1,5 +1,7 @@
 export type MeetingStatus = 'recording' | 'uploading' | 'processing' | 'ready' | 'failed';
 
+export type AudioFormat = 'pending' | 'transcoding' | 'm4a' | 'webm' | 'failed';
+
 export type MeetingType = 
   | 'General Legal Meeting'
   | 'Client Consultation'
@@ -33,6 +35,7 @@ export interface Meeting {
   primary_contact_id: string | null;
   status: MeetingStatus;
   audio_path: string | null;
+  audio_format: AudioFormat;
   duration_seconds: number;
   billable: boolean;
   billable_seconds: number;

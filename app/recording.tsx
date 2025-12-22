@@ -182,23 +182,25 @@ export default function RecordingScreen() {
       const response = await fetch(uri);
       const blob = await response.blob();
       
-      // Determine file extension and content type based on platform
+      // Determine file extension, content type, and audio format based on platform
       // Web browsers typically record in WebM format, native apps use M4A
       let fileExtension: string;
       let contentType: string;
+      let audioFormat: 'webm' | 'm4a';
       
       if (Platform.OS === "web") {
         // Web browsers record in WebM format (especially Chrome)
         // Use the blob's actual type if available, fallback to webm
         contentType = blob.type || "audio/webm";
-        fileExtension = contentType.includes("webm") ? "webm" : 
-                        contentType.includes("mp4") ? "m4a" : 
-                        contentType.includes("ogg") ? "ogg" : "webm";
-        console.log("[Recording] Web audio format:", contentType);
+        const isWebm = contentType.includes("webm") || contentType.includes("ogg");
+        fileExtension = isWebm ? "webm" : "m4a";
+        audioFormat = isWebm ? "webm" : "m4a";
+        console.log("[Recording] Web audio format:", contentType, "-> audioFormat:", audioFormat);
       } else {
         // Native (iOS/Android) uses M4A format
         contentType = "audio/mp4";
         fileExtension = "m4a";
+        audioFormat = "m4a";
       }
       
       const audioPath = `${user?.id}/${meetingId}/audio.${fileExtension}`;
@@ -212,11 +214,13 @@ export default function RecordingScreen() {
 
       if (uploadError) throw uploadError;
 
-      console.log("[Recording] Upload complete");
+      console.log("[Recording] Upload complete, triggering finalization with format:", audioFormat);
 
+      // Finalize upload - this will trigger transcoding if format is webm
       await finalizeUpload({
         meetingId,
         audioPath,
+        audioFormat,
         durationSeconds: elapsedSeconds,
         startedAt: startedAt || new Date().toISOString(),
         endedAt,

@@ -63,6 +63,7 @@ CREATE TABLE meetings (
   primary_contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
   status meeting_status DEFAULT 'recording',
   audio_path TEXT,
+  audio_format TEXT DEFAULT 'pending', -- Values: 'pending', 'transcoding', 'm4a', 'webm', 'failed'
   duration_seconds INTEGER DEFAULT 0,
   billable BOOLEAN DEFAULT false,
   billable_seconds INTEGER DEFAULT 0,
@@ -148,6 +149,7 @@ CREATE INDEX idx_meetings_user_id ON meetings(user_id);
 CREATE INDEX idx_meetings_status ON meetings(status);
 CREATE INDEX idx_meetings_created_at ON meetings(created_at DESC);
 CREATE INDEX idx_meetings_primary_contact_id ON meetings(primary_contact_id);
+CREATE INDEX idx_meetings_audio_format ON meetings(audio_format);
 CREATE INDEX idx_transcript_segments_meeting_id ON transcript_segments(meeting_id);
 CREATE INDEX idx_transcript_segments_start_ms ON transcript_segments(start_ms);
 CREATE INDEX idx_ai_outputs_meeting_id ON ai_outputs(meeting_id);

@@ -33,6 +33,8 @@ import {
   Circle,
   Bell,
   Calendar,
+  RefreshCw,
+  Loader,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
@@ -70,7 +72,7 @@ export default function MeetingDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting, isLoading } = useMeetingDetails(id || null);
-  const { deleteMeeting } = useMeetings();
+  const { deleteMeeting, retryTranscoding, isTranscoding } = useMeetings();
   const { data: tasks = [], isLoading: tasksLoading } = useMeetingTasks(id || null);
   const { createTask, updateTask, deleteTask, isCreating } = useTasks();
 
@@ -234,7 +236,13 @@ export default function MeetingDetailScreen() {
   }, [meeting?.audio_path, onPlaybackStatusUpdate]);
 
   useEffect(() => {
-    if (meeting?.audio_path && meeting?.status === 'ready') {
+    // Only load audio if it's ready and not in transcoding/failed state
+    const canLoadAudio = meeting?.audio_path && 
+                         meeting?.status === 'ready' && 
+                         meeting?.audio_format !== 'transcoding' && 
+                         meeting?.audio_format !== 'failed';
+    
+    if (canLoadAudio) {
       loadAudio();
     }
 
@@ -250,7 +258,7 @@ export default function MeetingDetailScreen() {
         blobUrlRef.current = null;
       }
     };
-  }, [meeting?.audio_path, meeting?.status, loadAudio]);
+  }, [meeting?.audio_path, meeting?.status, meeting?.audio_format, loadAudio]);
 
   const handlePlayPause = async () => {
     if (!soundRef.current) {
@@ -900,7 +908,36 @@ export default function MeetingDetailScreen() {
 
       {meeting.audio_path && meeting.status === 'ready' && (
         <View style={styles.audioBar}>
-          {audioLoadError ? (
+          {/* Show transcoding status */}
+          {meeting.audio_format === 'transcoding' ? (
+            <View style={styles.audioErrorContainer}>
+              <Loader size={16} color={Colors.accentLight} />
+              <Text style={styles.audioErrorText}>
+                Audio is being prepared for playback...
+              </Text>
+            </View>
+          ) : meeting.audio_format === 'failed' ? (
+            <View style={styles.audioErrorContainer}>
+              <AlertTriangle size={16} color={Colors.warning} />
+              <Text style={styles.audioErrorText} numberOfLines={1}>
+                Audio conversion failed
+              </Text>
+              <Pressable 
+                style={styles.retryButton}
+                onPress={() => retryTranscoding(meeting.id)}
+                disabled={isTranscoding}
+              >
+                {isTranscoding ? (
+                  <ActivityIndicator size="small" color={Colors.accentLight} />
+                ) : (
+                  <>
+                    <RefreshCw size={14} color={Colors.accentLight} />
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          ) : audioLoadError ? (
             <View style={styles.audioErrorContainer}>
               <AlertTriangle size={16} color={Colors.warning} />
               <Text style={styles.audioErrorText} numberOfLines={2}>
@@ -1336,6 +1373,20 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     flex: 1,
     flexWrap: 'wrap',
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: `${Colors.accentLight}15`,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  retryButtonText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.accentLight,
   },
   taskHeaderActions: {
     flexDirection: 'row',

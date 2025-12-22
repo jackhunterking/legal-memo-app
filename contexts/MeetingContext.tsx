@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
-import type { Meeting, MeetingWithDetails } from '@/types';
+import type { AudioFormat, Meeting, MeetingWithDetails } from '@/types';
 
 export const [MeetingProvider, useMeetings] = createContextHook(() => {
   const { user, profile } = useAuth();
@@ -107,22 +107,29 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     mutationFn: async ({
       meetingId,
       audioPath,
+      audioFormat,
       durationSeconds,
       startedAt,
       endedAt,
     }: {
       meetingId: string;
       audioPath: string;
+      audioFormat: AudioFormat;
       durationSeconds: number;
       startedAt: string;
       endedAt: string;
     }) => {
-      console.log('[MeetingContext] Finalizing upload for meeting:', meetingId);
+      console.log('[MeetingContext] Finalizing upload for meeting:', meetingId, 'format:', audioFormat);
+      
+      // Determine the initial audio_format status
+      // If it's webm, we'll need to trigger transcoding
+      const initialFormat: AudioFormat = audioFormat === 'webm' ? 'transcoding' : audioFormat;
       
       const { error } = await supabase
         .from('meetings')
         .update({
           audio_path: audioPath,
+          audio_format: initialFormat,
           duration_seconds: durationSeconds,
           billable_seconds: durationSeconds,
           started_at: startedAt,
@@ -145,6 +152,26 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
         });
       
       if (jobError) console.error('[MeetingContext] Job creation error:', jobError);
+      
+      // If the audio is webm, trigger transcoding Edge Function
+      if (audioFormat === 'webm') {
+        console.log('[MeetingContext] WebM format detected, triggering transcoding...');
+        try {
+          const { error: transcodeError } = await supabase.functions.invoke('transcode-audio', {
+            body: { meetingId, audioPath },
+          });
+          
+          if (transcodeError) {
+            console.error('[MeetingContext] Transcoding trigger error:', transcodeError);
+            // Don't throw - transcoding failure shouldn't block the upload
+          } else {
+            console.log('[MeetingContext] Transcoding triggered successfully');
+          }
+        } catch (err) {
+          console.error('[MeetingContext] Failed to trigger transcoding:', err);
+          // Don't throw - we'll handle this gracefully in the UI
+        }
+      }
       
       console.log('[MeetingContext] Upload finalized, processing queued');
     },
@@ -248,6 +275,45 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  const retryTranscodingMutation = useMutation({
+    mutationFn: async (meetingId: string) => {
+      console.log('[MeetingContext] Retrying transcoding for:', meetingId);
+      
+      // Get the meeting to find the audio path
+      const { data: meeting, error: fetchError } = await supabase
+        .from('meetings')
+        .select('audio_path')
+        .eq('id', meetingId)
+        .single();
+      
+      if (fetchError || !meeting?.audio_path) {
+        throw new Error('Could not find meeting audio');
+      }
+      
+      // Update status to transcoding
+      await supabase
+        .from('meetings')
+        .update({ audio_format: 'transcoding' })
+        .eq('id', meetingId);
+      
+      // Trigger the transcoding Edge Function
+      const { error } = await supabase.functions.invoke('transcode-audio', {
+        body: { meetingId, audioPath: meeting.audio_path },
+      });
+      
+      if (error) {
+        console.error('[MeetingContext] Error retrying transcoding:', error);
+        throw new Error(error.message || 'Failed to retry transcoding');
+      }
+      
+      console.log('[MeetingContext] Transcoding retry triggered');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meetings'] });
+      queryClient.invalidateQueries({ queryKey: ['meeting'] });
+    },
+  });
+
   return {
     meetings: meetingsQuery.data || [],
     isLoading: meetingsQuery.isLoading,
@@ -262,11 +328,13 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       updateMeetingMutation.mutateAsync({ meetingId, updates }),
     deleteMeeting: deleteMeetingMutation.mutateAsync,
     retryProcessing: retryProcessingMutation.mutateAsync,
+    retryTranscoding: retryTranscodingMutation.mutateAsync,
     
     isCreating: createInstantMeetingMutation.isPending,
     isUploading: finalizeUploadMutation.isPending,
     isUpdating: updateMeetingMutation.isPending,
     isDeleting: deleteMeetingMutation.isPending,
+    isTranscoding: retryTranscodingMutation.isPending,
   };
 });
 
@@ -312,7 +380,8 @@ export function useMeetingDetails(meetingId: string | null) {
     enabled: !!meetingId && !!user?.id,
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (data?.status === 'processing' || data?.status === 'uploading') {
+      // Poll when processing, uploading, or transcoding audio
+      if (data?.status === 'processing' || data?.status === 'uploading' || data?.audio_format === 'transcoding') {
         return 3000;
       }
       return false;
