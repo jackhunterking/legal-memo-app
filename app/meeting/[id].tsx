@@ -12,7 +12,7 @@ import {
   Modal,
   Share,
   Switch,
-  InteractionManager,
+  KeyboardAvoidingView,
 } from "react-native";
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Audio, AVPlaybackStatus } from "expo-av";
@@ -41,7 +41,6 @@ import {
   Bell,
   Flag,
   ChevronRight,
-  Edit2,
   User,
   FileText,
   Check,
@@ -483,9 +482,12 @@ const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task, onDelete 
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View style={styles.bottomSheetOverlay}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.bottomSheetOverlay}
+      >
         <Pressable style={styles.bottomSheetBackdrop} onPress={handleClose} />
-        <View style={styles.addTaskSheetContainer}>
+        <View style={styles.editTaskSheetContainer}>
           <View style={styles.bottomSheetHandle} />
           <View style={styles.bottomSheetHeader}>
             <Text style={styles.bottomSheetTitle}>Edit Task</Text>
@@ -789,7 +791,7 @@ const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task, onDelete 
             </Pressable>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -1723,7 +1725,7 @@ export default function MeetingDetailScreen() {
     // Haptic feedback when share is triggered
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {
+    } catch {
       // Haptics not available (web)
     }
 
@@ -2892,9 +2894,16 @@ const styles = StyleSheet.create({
     maxHeight: "90%",
     paddingBottom: Platform.OS === "ios" ? 34 : 20,
   },
+  editTaskSheetContainer: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "75%",
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+  },
   addTaskContent: {
     paddingHorizontal: 20,
-    maxHeight: 400,
+    flexGrow: 1,
   },
   taskInputContainer: {
     marginTop: 20,
