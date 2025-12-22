@@ -97,6 +97,8 @@ const InsightsBottomSheet = ({ visible, onClose, aiOutput }: any) => {
     },
   ];
 
+  const hasAnyContent = sections.some(section => section.items.length > 0);
+
   return (
     <Modal
       visible={visible}
@@ -118,22 +120,33 @@ const InsightsBottomSheet = ({ visible, onClose, aiOutput }: any) => {
             style={styles.bottomSheetContent}
             showsVerticalScrollIndicator={false}
           >
-            {sections.map(
-              (section) =>
-                section.items.length > 0 && (
-                  <View key={section.title} style={styles.insightSection}>
-                    <Text style={styles.insightSectionTitle}>
-                      {section.title}
-                    </Text>
-                    {section.items.map((item: any, index: number) => (
-                      <View key={index} style={styles.insightItem}>
-                        <Text style={styles.insightItemText}>
-                          • {item[section.accessor]}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                )
+            {hasAnyContent ? (
+              sections.map(
+                (section) =>
+                  section.items.length > 0 && (
+                    <View key={section.title} style={styles.insightSection}>
+                      <Text style={styles.insightSectionTitle}>
+                        {section.title}
+                      </Text>
+                      {section.items.map((item: any, index: number) => (
+                        <View key={index} style={styles.insightItem}>
+                          <Text style={styles.insightItemText}>
+                            • {item[section.accessor]}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )
+              )
+            ) : (
+              <View style={styles.emptyInsightsContainer}>
+                <Text style={styles.emptyInsightsText}>
+                  No detailed insights are available for this meeting.
+                </Text>
+                <Text style={styles.emptyInsightsSubtext}>
+                  The meeting summary is available in the main view.
+                </Text>
+              </View>
             )}
           </ScrollView>
         </View>
@@ -2912,6 +2925,24 @@ const styles = StyleSheet.create({
     backgroundColor: `${Colors.accentLight}40`,
     color: Colors.text,
     fontWeight: "600",
+  },
+  emptyInsightsContainer: {
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    alignItems: "center" as const,
+  },
+  emptyInsightsText: {
+    fontSize: 15,
+    color: Colors.text,
+    textAlign: "center" as const,
+    marginBottom: 8,
+    fontWeight: "500" as const,
+  },
+  emptyInsightsSubtext: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    textAlign: "center" as const,
+    lineHeight: 18,
   },
   // Quick Add Modal Styles
   modalOverlay: {
