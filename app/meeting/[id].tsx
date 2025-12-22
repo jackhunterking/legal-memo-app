@@ -40,12 +40,14 @@ import {
   Bell,
   Flag,
   ChevronRight,
+  Edit2,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import { useTasks, useMeetingTasks } from "@/contexts/TaskContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
+import type { MeetingTask } from "@/types";
 
 // Unified Action Item type
 type UnifiedAction = {
@@ -315,6 +317,464 @@ const getReminderDate = (deadline: Date | null, option: ReminderOption): Date | 
     default:
       return null;
   }
+};
+
+const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task }: any) => {
+  const [taskTitle, setTaskTitle] = useState("");
+  const [selectedDeadline, setSelectedDeadline] = useState<DeadlineOption>('none');
+  const [customDeadline, setCustomDeadline] = useState<Date | null>(null);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [selectedReminder, setSelectedReminder] = useState<ReminderOption>('none');
+  const [selectedPriority, setSelectedPriority] = useState<PriorityOption>('medium');
+  const [showDeadlineOptions, setShowDeadlineOptions] = useState(false);
+  const [showReminderOptions, setShowReminderOptions] = useState(false);
+  const [showPriorityOptions, setShowPriorityOptions] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  useEffect(() => {
+    if (task && visible) {
+      setTaskTitle(task.title);
+      setSelectedPriority(task.priority || 'medium');
+      
+      if (task.deadline) {
+        const deadline = new Date(task.deadline);
+        const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const nextWeek = new Date(today);
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        
+        if (deadline.toDateString() === today.toDateString()) {
+          setSelectedDeadline('today');
+        } else if (deadline.toDateString() === tomorrow.toDateString()) {
+          setSelectedDeadline('tomorrow');
+        } else if (deadline.toDateString() === nextWeek.toDateString()) {
+          setSelectedDeadline('next_week');
+        } else {
+          setSelectedDeadline('custom');
+          setCustomDeadline(deadline);
+        }
+      } else {
+        setSelectedDeadline('none');
+        setCustomDeadline(null);
+      }
+      
+      if (task.reminder_time) {
+        setReminderEnabled(true);
+        const deadline = task.deadline ? new Date(task.deadline) : null;
+        const reminder = new Date(task.reminder_time);
+        
+        if (deadline) {
+          const diffMs = deadline.getTime() - reminder.getTime();
+          const diffHours = diffMs / (1000 * 60 * 60);
+          const diffDays = diffMs / (1000 * 60 * 60 * 24);
+          
+          if (Math.abs(diffMs) < 60000) {
+            setSelectedReminder('at_deadline');
+          } else if (Math.abs(diffHours - 1) < 0.1) {
+            setSelectedReminder('1_hour');
+          } else if (Math.abs(diffDays - 1) < 0.1) {
+            setSelectedReminder('1_day');
+          } else if (Math.abs(diffDays - 3) < 0.1) {
+            setSelectedReminder('3_days');
+          } else {
+            setSelectedReminder('at_deadline');
+          }
+        } else {
+          setSelectedReminder('at_deadline');
+        }
+      } else {
+        setReminderEnabled(false);
+        setSelectedReminder('none');
+      }
+    }
+  }, [task, visible]);
+
+  const deadlineDate = useMemo(() => {
+    if (selectedDeadline === 'custom') return customDeadline;
+    return getDeadlineDate(selectedDeadline);
+  }, [selectedDeadline, customDeadline]);
+  
+  const reminderDate = useMemo(() => getReminderDate(deadlineDate, selectedReminder), [deadlineDate, selectedReminder]);
+
+  const handleUpdate = () => {
+    if (taskTitle.trim() && task) {
+      onUpdate({
+        taskId: task.id,
+        updates: {
+          title: taskTitle.trim(),
+          deadline: deadlineDate?.toISOString() || null,
+          reminder_time: reminderEnabled ? reminderDate?.toISOString() || null : null,
+          priority: selectedPriority,
+        },
+      });
+    }
+  };
+
+  const resetForm = () => {
+    setTaskTitle("");
+    setSelectedDeadline('none');
+    setCustomDeadline(null);
+    setReminderEnabled(false);
+    setSelectedReminder('none');
+    setSelectedPriority('medium');
+    setShowDeadlineOptions(false);
+    setShowReminderOptions(false);
+    setShowPriorityOptions(false);
+    setShowDatePicker(false);
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  const getDeadlineLabel = () => {
+    if (selectedDeadline === 'custom' && customDeadline) {
+      return formatDeadlineDate(customDeadline);
+    }
+    const option = DEADLINE_OPTIONS.find(o => o.key === selectedDeadline);
+    return option?.label || 'No deadline';
+  };
+
+  const formatDeadlineDate = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+      return 'Tomorrow';
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  };
+
+  const formatReminderDateTime = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const dateStr = date.toDateString() === today.toDateString() 
+      ? 'Today' 
+      : date.toDateString() === tomorrow.toDateString()
+      ? 'Tomorrow'
+      : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return `${dateStr} at ${timeStr}`;
+  };
+
+  const getPriorityOption = () => {
+    return PRIORITY_OPTIONS.find(o => o.key === selectedPriority) || PRIORITY_OPTIONS[1];
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={handleClose}
+    >
+      <View style={styles.bottomSheetOverlay}>
+        <Pressable style={styles.bottomSheetBackdrop} onPress={handleClose} />
+        <View style={styles.addTaskSheetContainer}>
+          <View style={styles.bottomSheetHandle} />
+          <View style={styles.bottomSheetHeader}>
+            <Text style={styles.bottomSheetTitle}>Edit Task</Text>
+            <Pressable onPress={handleClose} style={styles.bottomSheetClose}>
+              <X size={24} color={Colors.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView style={styles.addTaskContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.taskInputContainer}>
+              <TextInput
+                style={styles.taskTitleInput}
+                placeholder="What needs to be done?"
+                placeholderTextColor={Colors.textMuted}
+                value={taskTitle}
+                onChangeText={setTaskTitle}
+                autoFocus
+                multiline
+                numberOfLines={2}
+              />
+            </View>
+
+            <Pressable
+              style={styles.optionRow}
+              onPress={() => {
+                setShowDeadlineOptions(!showDeadlineOptions);
+                setShowReminderOptions(false);
+                setShowPriorityOptions(false);
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <View style={styles.optionIconWrapper}>
+                <Calendar size={20} color={selectedDeadline !== 'none' ? Colors.accentLight : Colors.textMuted} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={styles.optionLabel}>Deadline</Text>
+                <Text style={[styles.optionValue, selectedDeadline !== 'none' && styles.optionValueActive]}>
+                  {getDeadlineLabel()}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showDeadlineOptions ? '90deg' : '0deg' }] }} />
+            </Pressable>
+
+            {showDeadlineOptions && (
+              <View style={styles.optionChipsContainer}>
+                {DEADLINE_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedDeadline === option.key && styles.optionChipActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedDeadline(option.key);
+                      if (option.key === 'none') {
+                        setSelectedReminder('none');
+                        setCustomDeadline(null);
+                      }
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedDeadline === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+                <Pressable
+                  style={[
+                    styles.optionChip,
+                    selectedDeadline === 'custom' && styles.optionChipActive,
+                  ]}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      setShowDatePicker(true);
+                      setSelectedDeadline('custom');
+                      if (!customDeadline) {
+                        const tomorrow = new Date();
+                        tomorrow.setDate(tomorrow.getDate() + 1);
+                        tomorrow.setHours(17, 0, 0, 0);
+                        setCustomDeadline(tomorrow);
+                      }
+                    } else {
+                      const dateStr = prompt('Enter deadline date (MM/DD/YYYY):');
+                      if (dateStr) {
+                        const date = new Date(dateStr);
+                        if (!isNaN(date.getTime())) {
+                          date.setHours(23, 59, 59, 999);
+                          setCustomDeadline(date);
+                          setSelectedDeadline('custom');
+                        }
+                      }
+                    }
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Calendar size={14} color={selectedDeadline === 'custom' ? Colors.background : Colors.textSecondary} />
+                  <Text style={[
+                    styles.optionChipText,
+                    selectedDeadline === 'custom' && styles.optionChipTextActive,
+                  ]}>
+                    Custom date
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+            
+            {selectedDeadline !== 'none' && deadlineDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Calendar size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Due: {formatDeadlineDate(deadlineDate)}
+                </Text>
+              </View>
+            )}
+
+            <View style={[styles.optionRow, selectedDeadline === 'none' && styles.optionRowDisabled]}>
+              <View style={styles.optionIconWrapper}>
+                <Bell size={20} color={reminderEnabled && selectedDeadline !== 'none' ? Colors.accentLight : Colors.textMuted} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={[styles.optionLabel, selectedDeadline === 'none' && styles.optionLabelDisabled]}>Reminder</Text>
+                <Text style={[
+                  styles.optionValue,
+                  selectedDeadline === 'none' && styles.optionValueDisabled,
+                ]}>
+                  {selectedDeadline === 'none' ? 'Set deadline first' : (reminderEnabled ? 'Enabled' : 'Disabled')}
+                </Text>
+              </View>
+              <Switch
+                value={reminderEnabled && selectedDeadline !== 'none'}
+                onValueChange={(value) => {
+                  if (selectedDeadline === 'none') return;
+                  setReminderEnabled(value);
+                  if (value) {
+                    setShowReminderOptions(true);
+                    setShowDeadlineOptions(false);
+                    setShowPriorityOptions(false);
+                    if (selectedReminder === 'none') {
+                      setSelectedReminder('at_deadline');
+                    }
+                  } else {
+                    setShowReminderOptions(false);
+                  }
+                  if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                disabled={selectedDeadline === 'none'}
+                trackColor={{ false: Colors.border, true: Colors.accentLight }}
+                thumbColor={Colors.background}
+              />
+            </View>
+
+            {showReminderOptions && reminderEnabled && selectedDeadline !== 'none' && (
+              <View style={styles.optionChipsContainer}>
+                {REMINDER_OPTIONS.filter(opt => opt.key !== 'none').map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedReminder === option.key && styles.optionChipActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedReminder(option.key);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedReminder === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+            
+            {reminderEnabled && selectedReminder !== 'none' && reminderDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Bell size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Remind: {formatReminderDateTime(reminderDate)}
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              style={styles.optionRow}
+              onPress={() => {
+                setShowPriorityOptions(!showPriorityOptions);
+                setShowDeadlineOptions(false);
+                setShowReminderOptions(false);
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <View style={styles.optionIconWrapper}>
+                <Flag size={20} color={getPriorityOption().color} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={styles.optionLabel}>Priority</Text>
+                <Text style={[styles.optionValue, { color: getPriorityOption().color }]}>
+                  {getPriorityOption().label}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showPriorityOptions ? '90deg' : '0deg' }] }} />
+            </Pressable>
+
+            {showPriorityOptions && (
+              <View style={styles.optionChipsContainer}>
+                {PRIORITY_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedPriority === option.key && styles.optionChipActive,
+                      { borderColor: option.color },
+                    ]}
+                    onPress={() => {
+                      setSelectedPriority(option.key);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Flag size={14} color={selectedPriority === option.key ? Colors.background : option.color} />
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedPriority === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <View style={{ height: 20 }} />
+          </ScrollView>
+
+          {Platform.OS !== 'web' && showDatePicker && customDeadline && (
+            <Modal
+              transparent
+              animationType="fade"
+              visible={showDatePicker}
+              onRequestClose={() => setShowDatePicker(false)}
+            >
+              <View style={styles.datePickerOverlay}>
+                <Pressable 
+                  style={styles.datePickerBackdrop} 
+                  onPress={() => setShowDatePicker(false)}
+                />
+                <View style={styles.datePickerContainer}>
+                  <View style={styles.datePickerHeader}>
+                    <Text style={styles.datePickerTitle}>Select Deadline</Text>
+                    <Pressable onPress={() => setShowDatePicker(false)}>
+                      <Text style={styles.datePickerDoneButton}>Done</Text>
+                    </Pressable>
+                  </View>
+                  <DateTimePicker
+                    value={customDeadline}
+                    mode="date"
+                    display="spinner"
+                    onChange={(event: any, date?: Date) => {
+                      if (date) {
+                        date.setHours(23, 59, 59, 999);
+                        setCustomDeadline(date);
+                      }
+                    }}
+                    minimumDate={new Date()}
+                  />
+                </View>
+              </View>
+            </Modal>
+          )}
+
+          <View style={styles.addTaskFooter}>
+            <Pressable
+              style={[
+                styles.addTaskButton,
+                !taskTitle.trim() && styles.addTaskButtonDisabled,
+              ]}
+              onPress={handleUpdate}
+              disabled={!taskTitle.trim() || isUpdating}
+            >
+              {isUpdating ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Text style={styles.addTaskButtonText}>Save Changes</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 };
 
 const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any) => {
@@ -852,13 +1312,14 @@ export default function MeetingDetailScreen() {
   const { data: tasks = [], isLoading: tasksLoading } = useMeetingTasks(
     id || null
   );
-  const { createTask, updateTask, deleteTask, isCreating } = useTasks();
+  const { createTask, updateTask, deleteTask, isCreating, isUpdating } = useTasks();
 
   const [showInsights, setShowInsights] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showEditMenu, setShowEditMenu] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
+  const [editingTask, setEditingTask] = useState<MeetingTask | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -1417,12 +1878,25 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
                   )}
                 </View>
                 {!action.isAIGenerated && (
-                  <Pressable
-                    style={styles.actionDeleteButton}
-                    onPress={() => handleDeleteTask(action.id)}
-                  >
-                    <Trash2 size={16} color={Colors.error} />
-                  </Pressable>
+                  <View style={styles.actionButtons}>
+                    <Pressable
+                      style={styles.actionEditButton}
+                      onPress={() => {
+                        setEditingTask(action.rawTask);
+                        if (Platform.OS !== 'web') {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }
+                      }}
+                    >
+                      <Edit2 size={16} color={Colors.accentLight} />
+                    </Pressable>
+                    <Pressable
+                      style={styles.actionDeleteButton}
+                      onPress={() => handleDeleteTask(action.id)}
+                    >
+                      <Trash2 size={16} color={Colors.error} />
+                    </Pressable>
+                  </View>
                 )}
               </View>
             ))
@@ -1594,6 +2068,24 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
         onAdd={handleAddTask}
         isCreating={isCreating}
         meetingTitle={title}
+      />
+
+      <EditTaskSheet
+        visible={!!editingTask}
+        onClose={() => setEditingTask(null)}
+        onUpdate={async (data: any) => {
+          try {
+            await updateTask(data);
+            setEditingTask(null);
+            if (Platform.OS !== 'web') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+          } catch (error) {
+            console.error('[MeetingDetail] Error updating task:', error);
+          }
+        }}
+        isUpdating={isUpdating}
+        task={editingTask}
       />
     </SafeAreaView>
   );
@@ -1776,9 +2268,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textMuted,
   },
+  actionButtons: {
+    flexDirection: 'row' as const,
+    gap: 8,
+  },
+  actionEditButton: {
+    padding: 4,
+  },
   actionDeleteButton: {
     padding: 4,
-    marginLeft: 8,
   },
   billingRow: {
     flexDirection: "row",
