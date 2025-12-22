@@ -14,8 +14,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Search, Plus, Clock, User, Building, Filter } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
+import { useMeetingTypes } from "@/contexts/MeetingTypeContext";
 import { useContacts } from "@/contexts/ContactContext";
-import type { Meeting, Contact, MeetingType } from "@/types";
+import type { Meeting, Contact } from "@/types";
 import Colors from "@/constants/colors";
 
 type TabView = "meetings" | "contacts";
@@ -26,14 +27,24 @@ const MeetingCard = ({ meeting, onPress }: { meeting: Meeting; onPress: () => vo
   const title = meeting.title_override || meeting.auto_title;
   const date = new Date(meeting.created_at);
   const duration = Math.floor(meeting.duration_seconds / 60);
+  const typeColor = meeting.meeting_type?.color || Colors.textMuted;
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {title}
-        </Text>
+        <View style={styles.cardTitleRow}>
+          <View style={[styles.typeIndicator, { backgroundColor: typeColor }]} />
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
       </View>
+      {meeting.meeting_type && (
+        <View style={styles.meetingTypeBadge}>
+          <View style={[styles.typeDot, { backgroundColor: typeColor }]} />
+          <Text style={styles.meetingTypeText}>{meeting.meeting_type.name}</Text>
+        </View>
+      )}
       <View style={styles.cardMeta}>
         <Text style={styles.cardDate}>
           {date.toLocaleDateString()} • {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -85,11 +96,12 @@ const ContactCard = ({ contact, onPress }: { contact: Contact; onPress: () => vo
 export default function MeetingsScreen() {
   const router = useRouter();
   const { meetings, isLoading: meetingsLoading } = useMeetings();
+  const { meetingTypes } = useMeetingTypes();
   const { contacts, isLoading: contactsLoading, searchContacts } = useContacts();
   const [activeTab, setActiveTab] = useState<TabView>("meetings");
   const [searchQuery, setSearchQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [selectedMeetingType, setSelectedMeetingType] = useState<MeetingType | "all">("all");
+  const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState<string | "all">("all");
   const [selectedDateFilter, setSelectedDateFilter] = useState<DateFilter>("all");
   const [selectedBillableFilter, setSelectedBillableFilter] = useState<BillableFilter>("all");
 
@@ -113,12 +125,12 @@ export default function MeetingsScreen() {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    setSelectedMeetingType("all");
+    setSelectedMeetingTypeId("all");
     setSelectedDateFilter("all");
     setSelectedBillableFilter("all");
   };
 
-  const hasActiveFilters = selectedMeetingType !== "all" || selectedDateFilter !== "all" || selectedBillableFilter !== "all";
+  const hasActiveFilters = selectedMeetingTypeId !== "all" || selectedDateFilter !== "all" || selectedBillableFilter !== "all";
 
   const handleMeetingPress = (meeting: Meeting) => {
     if (Platform.OS !== "web") {
@@ -152,7 +164,7 @@ export default function MeetingsScreen() {
         if (!title.includes(query) && !clientName.includes(query)) return false;
       }
 
-      if (selectedMeetingType !== "all" && m.meeting_type !== selectedMeetingType) {
+      if (selectedMeetingTypeId !== "all" && m.meeting_type_id !== selectedMeetingTypeId) {
         return false;
       }
 
@@ -182,7 +194,7 @@ export default function MeetingsScreen() {
 
       return true;
     });
-  }, [meetings, searchQuery, selectedMeetingType, selectedDateFilter, selectedBillableFilter]);
+  }, [meetings, searchQuery, selectedMeetingTypeId, selectedDateFilter, selectedBillableFilter]);
 
   const filteredContacts = searchQuery.trim()
     ? searchContacts(searchQuery)
@@ -291,45 +303,47 @@ export default function MeetingsScreen() {
               <Pressable
                 style={[
                   styles.filterChip,
-                  selectedMeetingType === "all" && styles.filterChipActive,
+                  selectedMeetingTypeId === "all" && styles.filterChipActive,
                 ]}
                 onPress={() => {
                   if (Platform.OS !== "web") {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   }
-                  setSelectedMeetingType("all");
+                  setSelectedMeetingTypeId("all");
                 }}
               >
                 <Text
                   style={[
                     styles.filterChipText,
-                    selectedMeetingType === "all" && styles.filterChipTextActive,
+                    selectedMeetingTypeId === "all" && styles.filterChipTextActive,
                   ]}
                 >
                   All Types
                 </Text>
               </Pressable>
-              {(["General Legal Meeting", "Client Consultation", "Case Review", "Settlement Discussion", "Contract Negotiation", "Witness Interview", "Internal Meeting"] as MeetingType[]).map((type) => (
+              {meetingTypes.map((type) => (
                 <Pressable
-                  key={type}
+                  key={type.id}
                   style={[
                     styles.filterChip,
-                    selectedMeetingType === type && styles.filterChipActive,
+                    selectedMeetingTypeId === type.id && styles.filterChipActive,
+                    selectedMeetingTypeId === type.id && { borderColor: type.color },
                   ]}
                   onPress={() => {
                     if (Platform.OS !== "web") {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }
-                    setSelectedMeetingType(type);
+                    setSelectedMeetingTypeId(type.id);
                   }}
                 >
+                  <View style={[styles.filterChipDot, { backgroundColor: type.color }]} />
                   <Text
                     style={[
                       styles.filterChipText,
-                      selectedMeetingType === type && styles.filterChipTextActive,
+                      selectedMeetingTypeId === type.id && styles.filterChipTextActive,
                     ]}
                   >
-                    {type}
+                    {type.name}
                   </Text>
                 </Pressable>
               ))}
@@ -531,6 +545,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
   filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -542,6 +559,11 @@ const styles = StyleSheet.create({
   filterChipActive: {
     backgroundColor: Colors.accentLight,
     borderColor: Colors.accentLight,
+  },
+  filterChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   filterChipText: {
     fontSize: 14,
@@ -570,13 +592,39 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
+  cardTitleRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  typeIndicator: {
+    width: 4,
+    height: 20,
+    borderRadius: 2,
+  },
   cardTitle: {
     flex: 1,
     fontSize: 17,
     fontWeight: "600" as const,
     color: Colors.text,
-    marginRight: 12,
     letterSpacing: -0.2,
+  },
+  meetingTypeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
+  },
+  typeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  meetingTypeText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: "500" as const,
   },
   cardMeta: {
     flexDirection: "row",

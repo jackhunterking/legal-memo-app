@@ -12,15 +12,41 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { DollarSign, LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint } from "lucide-react-native";
+import { DollarSign, LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Plus, Edit2, Check, X, Palette } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
+import { useMeetingTypes } from "@/contexts/MeetingTypeContext";
 import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, setBiometricEnabled } from "@/lib/biometrics";
+import type { MeetingType } from "@/types";
+
+const PRESET_COLORS = [
+  '#3B82F6', // Blue
+  '#10B981', // Green
+  '#8B5CF6', // Purple
+  '#F59E0B', // Orange
+  '#06B6D4', // Cyan
+  '#EC4899', // Pink
+  '#6B7280', // Gray
+  '#EF4444', // Red
+  '#14B8A6', // Teal
+  '#F97316', // Orange
+  '#8B5CF6', // Violet
+  '#84CC16', // Lime
+];
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { profile, updateProfile, signOut, user, isSigningOut } = useAuth();
+  const { 
+    allMeetingTypes, 
+    createMeetingType, 
+    updateMeetingType, 
+    deleteMeetingType,
+    isCreating,
+    isUpdating,
+    isDeleting,
+  } = useMeetingTypes();
 
   const [hourlyRate, setHourlyRate] = useState(
     (profile?.default_hourly_rate ?? 250).toString()
@@ -36,6 +62,14 @@ export default function SettingsScreen() {
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricType, setBiometricType] = useState<string | null>(null);
   const [biometricEnabled, setBiometricEnabledState] = useState(false);
+
+  // Meeting Types management state
+  const [showAddType, setShowAddType] = useState(false);
+  const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
+  const [newTypeName, setNewTypeName] = useState("");
+  const [newTypeColor, setNewTypeColor] = useState(PRESET_COLORS[0]);
+  const [editTypeName, setEditTypeName] = useState("");
+  const [editTypeColor, setEditTypeColor] = useState(PRESET_COLORS[0]);
 
   useEffect(() => {
     const checkBiometric = async () => {
@@ -183,6 +217,98 @@ export default function SettingsScreen() {
     }
   };
 
+  // Meeting Types handlers
+  const handleAddMeetingType = () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setShowAddType(true);
+    setNewTypeName("");
+    setNewTypeColor(PRESET_COLORS[0]);
+  };
+
+  const handleCancelAdd = () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setShowAddType(false);
+    setNewTypeName("");
+  };
+
+  const handleSaveNewType = async () => {
+    if (!newTypeName.trim()) {
+      Alert.alert("Error", "Please enter a name for the meeting type");
+      return;
+    }
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    try {
+      await createMeetingType({ name: newTypeName.trim(), color: newTypeColor });
+      setShowAddType(false);
+      setNewTypeName("");
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to create meeting type");
+    }
+  };
+
+  const handleEditType = (type: MeetingType) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setEditingTypeId(type.id);
+    setEditTypeName(type.name);
+    setEditTypeColor(type.color);
+  };
+
+  const handleCancelEdit = () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setEditingTypeId(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingTypeId || !editTypeName.trim()) return;
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    try {
+      await updateMeetingType({
+        id: editingTypeId,
+        updates: { name: editTypeName.trim(), color: editTypeColor },
+      });
+      setEditingTypeId(null);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to update meeting type");
+    }
+  };
+
+  const handleDeleteType = (type: MeetingType) => {
+    const message = type.is_default
+      ? `Are you sure you want to remove "${type.name}"? You can add it back later if needed.`
+      : `Are you sure you want to remove "${type.name}"?`;
+
+    if (Platform.OS === "web") {
+      if (confirm(message)) {
+        deleteMeetingType(type.id);
+      }
+    } else {
+      Alert.alert("Remove Meeting Type", message, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => deleteMeetingType(type.id),
+        },
+      ]);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -219,6 +345,156 @@ export default function SettingsScreen() {
               thumbColor={Colors.text}
             />
           </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Meeting Types</Text>
+        <View style={styles.section}>
+          {allMeetingTypes.filter(t => t.is_active).map((type) => (
+            <View key={type.id} style={styles.settingRow}>
+              {editingTypeId === type.id ? (
+                <>
+                  <View style={styles.typeEditContainer}>
+                    <TextInput
+                      style={styles.typeEditInput}
+                      value={editTypeName}
+                      onChangeText={setEditTypeName}
+                      autoFocus
+                    />
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorPickerScroll}>
+                      {PRESET_COLORS.map((color) => (
+                        <Pressable
+                          key={color}
+                          style={[
+                            styles.colorSwatch,
+                            { backgroundColor: color },
+                            editTypeColor === color && styles.colorSwatchSelected,
+                          ]}
+                          onPress={() => {
+                            if (Platform.OS !== "web") {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }
+                            setEditTypeColor(color);
+                          }}
+                        >
+                          {editTypeColor === color && (
+                            <Check size={14} color="#FFFFFF" strokeWidth={3} />
+                          )}
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                  <View style={styles.typeActions}>
+                    <Pressable
+                      onPress={handleSaveEdit}
+                      style={styles.typeActionButton}
+                      disabled={isUpdating}
+                    >
+                      <Check size={20} color={Colors.success || "#34C759"} />
+                    </Pressable>
+                    <Pressable
+                      onPress={handleCancelEdit}
+                      style={styles.typeActionButton}
+                      disabled={isUpdating}
+                    >
+                      <X size={20} color={Colors.textMuted} />
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.settingLeft}>
+                    <View style={[styles.typeColorDot, { backgroundColor: type.color }]} />
+                    <Text style={styles.settingLabel}>{type.name}</Text>
+                    {type.is_default && (
+                      <View style={styles.defaultBadge}>
+                        <Text style={styles.defaultBadgeText}>Default</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.typeActions}>
+                    <Pressable
+                      onPress={() => handleEditType(type)}
+                      style={styles.typeActionButton}
+                    >
+                      <Edit2 size={18} color={Colors.accentLight} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDeleteType(type)}
+                      style={styles.typeActionButton}
+                      disabled={isDeleting}
+                    >
+                      <Trash2 size={18} color={Colors.error} />
+                    </Pressable>
+                  </View>
+                </>
+              )}
+            </View>
+          ))}
+
+          {showAddType ? (
+            <View style={[styles.settingRow, styles.addTypeRow]}>
+              <View style={styles.typeEditContainer}>
+                <TextInput
+                  style={styles.typeEditInput}
+                  value={newTypeName}
+                  onChangeText={setNewTypeName}
+                  placeholder="Meeting type name"
+                  placeholderTextColor={Colors.textMuted}
+                  autoFocus
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorPickerScroll}>
+                  {PRESET_COLORS.map((color) => (
+                    <Pressable
+                      key={color}
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: color },
+                        newTypeColor === color && styles.colorSwatchSelected,
+                      ]}
+                      onPress={() => {
+                        if (Platform.OS !== "web") {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }
+                        setNewTypeColor(color);
+                      }}
+                    >
+                      {newTypeColor === color && (
+                        <Check size={14} color="#FFFFFF" strokeWidth={3} />
+                      )}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+              <View style={styles.typeActions}>
+                <Pressable
+                  onPress={handleSaveNewType}
+                  style={styles.typeActionButton}
+                  disabled={isCreating}
+                >
+                  <Check size={20} color={Colors.success || "#34C759"} />
+                </Pressable>
+                <Pressable
+                  onPress={handleCancelAdd}
+                  style={styles.typeActionButton}
+                  disabled={isCreating}
+                >
+                  <X size={20} color={Colors.textMuted} />
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              style={[styles.settingRow, styles.addButtonRow]}
+              onPress={handleAddMeetingType}
+            >
+              <View style={styles.settingLeft}>
+                <Plus size={20} color={Colors.accentLight} />
+                <Text style={[styles.settingLabel, styles.addButtonText]}>
+                  Add Meeting Type
+                </Text>
+              </View>
+            </Pressable>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>Security</Text>
@@ -528,5 +804,72 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: "center",
     lineHeight: 20,
+  },
+  typeColorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    marginRight: 4,
+  },
+  defaultBadge: {
+    backgroundColor: Colors.surfaceLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  defaultBadgeText: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontWeight: "600" as const,
+  },
+  typeActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  typeActionButton: {
+    padding: 4,
+  },
+  addButtonRow: {
+    borderBottomWidth: 0,
+  },
+  addButtonText: {
+    color: Colors.accentLight,
+  },
+  addTypeRow: {
+    borderBottomWidth: 0,
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 12,
+  },
+  typeEditContainer: {
+    flex: 1,
+    gap: 12,
+  },
+  typeEditInput: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  colorPickerScroll: {
+    flexDirection: "row",
+  },
+  colorSwatch: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  colorSwatchSelected: {
+    borderColor: Colors.text,
   },
 });

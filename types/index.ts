@@ -2,14 +2,17 @@ export type MeetingStatus = 'recording' | 'uploading' | 'processing' | 'ready' |
 
 export type AudioFormat = 'pending' | 'transcoding' | 'm4a' | 'webm' | 'failed';
 
-export type MeetingType = 
-  | 'General Legal Meeting'
-  | 'Client Consultation'
-  | 'Case Review'
-  | 'Settlement Discussion'
-  | 'Contract Negotiation'
-  | 'Witness Interview'
-  | 'Internal Meeting';
+export interface MeetingType {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  is_active: boolean;
+  is_default: boolean;
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+}
 
 export type SpeakerLabel = 'LAWYER' | 'CLIENT' | 'OTHER' | 'UNKNOWN';
 
@@ -30,7 +33,8 @@ export interface Meeting {
   user_id: string;
   auto_title: string;
   title_override: string | null;
-  meeting_type: MeetingType;
+  meeting_type_id: string | null;
+  meeting_type?: MeetingType;
   client_name: string | null;
   primary_contact_id: string | null;
   status: MeetingStatus;
@@ -163,7 +167,8 @@ export interface MeetingWithDetails extends Meeting {
   tasks?: MeetingTask[];
 }
 
-export const MEETING_TYPES: MeetingType[] = [
+// Default meeting type names (for reference)
+export const DEFAULT_MEETING_TYPE_NAMES = [
   'General Legal Meeting',
   'Client Consultation',
   'Case Review',
@@ -171,7 +176,7 @@ export const MEETING_TYPES: MeetingType[] = [
   'Contract Negotiation',
   'Witness Interview',
   'Internal Meeting',
-];
+] as const;
 
 export type ContactRole = 'CLIENT' | 'LAWYER' | 'OTHER';
 

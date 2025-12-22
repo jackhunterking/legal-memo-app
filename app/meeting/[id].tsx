@@ -47,12 +47,12 @@ import {
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
+import { useMeetingTypes } from "@/contexts/MeetingTypeContext";
 import { useTasks, useMeetingTasks } from "@/contexts/TaskContext";
 import { useContacts } from "@/contexts/ContactContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import type { MeetingTask } from "@/types";
-import { MEETING_TYPES } from "@/types";
 
 // Unified Action Item type
 type UnifiedAction = {
@@ -1314,6 +1314,7 @@ export default function MeetingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting, isLoading } = useMeetingDetails(id || null);
   const { deleteMeeting, retryTranscoding, isTranscoding, updateMeetingDetails } = useMeetings();
+  const { meetingTypes } = useMeetingTypes();
   const { data: tasks = [], isLoading: tasksLoading } = useMeetingTasks(
     id || null
   );
@@ -1795,17 +1796,15 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
 
       {/* Scrollable Content */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Meeting Details Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Meeting Details</Text>
-          
-          {/* Total Time */}
+        {/* Meeting Details Section */}
+        <View style={styles.detailsSection}>
+          {/* Time Logged */}
           <View style={styles.detailRow}>
             <View style={styles.detailIconWrapper}>
-              <Clock size={18} color={Colors.accentLight} />
+              <Clock size={20} color={Colors.accentLight} />
             </View>
             <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Total Time Logged</Text>
+              <Text style={styles.detailLabel}>Time Logged</Text>
               <Text style={styles.detailValue}>{formatDuration(meeting.duration_seconds)}</Text>
             </View>
           </View>
@@ -1820,7 +1819,7 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
             }}
           >
             <View style={styles.detailIconWrapper}>
-              <User size={18} color={Colors.accentLight} />
+              <User size={20} color={Colors.accentLight} />
             </View>
             <View style={styles.detailContent}>
               <Text style={styles.detailLabel}>Contact</Text>
@@ -1830,7 +1829,7 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
                   : meeting.client_name || 'Not assigned'}
               </Text>
             </View>
-            <ChevronDown size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showContactDropdown ? '180deg' : '0deg' }] }} />
+            <ChevronDown size={20} color={Colors.textMuted} style={{ transform: [{ rotate: showContactDropdown ? '180deg' : '0deg' }] }} />
           </Pressable>
 
           {showContactDropdown && (
@@ -1888,32 +1887,40 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
             }}
           >
             <View style={styles.detailIconWrapper}>
-              <FileText size={18} color={Colors.accentLight} />
+              <FileText size={20} color={Colors.accentLight} />
             </View>
             <View style={styles.detailContent}>
               <Text style={styles.detailLabel}>Meeting Type</Text>
-              <Text style={styles.detailValue}>{meeting.meeting_type}</Text>
+              <View style={styles.meetingTypeDisplay}>
+                {meeting.meeting_type && (
+                  <View style={[styles.meetingTypeColorDot, { backgroundColor: meeting.meeting_type.color }]} />
+                )}
+                <Text style={styles.detailValue}>{meeting.meeting_type?.name || 'Not set'}</Text>
+              </View>
             </View>
-            <ChevronDown size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showMeetingTypeDropdown ? '180deg' : '0deg' }] }} />
+            <ChevronDown size={20} color={Colors.textMuted} style={{ transform: [{ rotate: showMeetingTypeDropdown ? '180deg' : '0deg' }] }} />
           </Pressable>
 
           {showMeetingTypeDropdown && (
             <View style={styles.dropdownContainer}>
               <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                {MEETING_TYPES.map((type) => (
+                {meetingTypes.map((type) => (
                   <Pressable
-                    key={type}
+                    key={type.id}
                     style={styles.dropdownItem}
                     onPress={async () => {
                       if (id) {
-                        await updateMeetingDetails(id, { meeting_type: type });
+                        await updateMeetingDetails(id, { meeting_type_id: type.id });
                         setShowMeetingTypeDropdown(false);
                         if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       }
                     }}
                   >
-                    <Text style={styles.dropdownItemText}>{type}</Text>
-                    {meeting.meeting_type === type && (
+                    <View style={styles.dropdownItemContent}>
+                      <View style={[styles.meetingTypeColorDot, { backgroundColor: type.color }]} />
+                      <Text style={styles.dropdownItemText}>{type.name}</Text>
+                    </View>
+                    {meeting.meeting_type_id === type.id && (
                       <Check size={16} color={Colors.accentLight} />
                     )}
                   </Pressable>
@@ -1923,9 +1930,9 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
           )}
 
           {/* Billable Toggle */}
-          <View style={styles.detailRow}>
+          <View style={[styles.detailRow, styles.lastDetailRow]}>
             <View style={styles.detailIconWrapper}>
-              <DollarSign size={18} color={Colors.accentLight} />
+              <DollarSign size={20} color={Colors.accentLight} />
             </View>
             <View style={styles.detailContent}>
               <Text style={styles.detailLabel}>Billable</Text>
@@ -2994,32 +3001,43 @@ const styles = StyleSheet.create({
     fontWeight: "600" as const,
     color: Colors.accentLight,
   },
+  detailsSection: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
   detailRow: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    paddingVertical: 12,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  lastDetailRow: {
+    borderBottomWidth: 0,
+  },
   detailIconWrapper: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: `${Colors.accentLight}15`,
     justifyContent: "center" as const,
     alignItems: "center" as const,
-    marginRight: 12,
+    marginRight: 16,
   },
   detailContent: {
     flex: 1,
   },
   detailLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.textMuted,
-    marginBottom: 2,
+    marginBottom: 4,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+    fontWeight: "500" as const,
   },
   detailValue: {
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: "600" as const,
     color: Colors.text,
   },
@@ -3065,6 +3083,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.text,
     fontWeight: "500" as const,
+  },
+  dropdownItemContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  meetingTypeDisplay: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  meetingTypeColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   dropdownItemSubtext: {
     fontSize: 12,

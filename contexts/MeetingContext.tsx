@@ -3,10 +3,12 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
+import { useMeetingTypes } from './MeetingTypeContext';
 import type { AudioFormat, Meeting, MeetingWithDetails } from '@/types';
 
 export const [MeetingProvider, useMeetings] = createContextHook(() => {
   const { user, profile } = useAuth();
+  const { meetingTypes } = useMeetingTypes();
   const queryClient = useQueryClient();
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
 
@@ -18,7 +20,7 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       
       const { data, error } = await supabase
         .from('meetings')
-        .select('*')
+        .select('*, meeting_type:meeting_types(*)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       
@@ -44,19 +46,22 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       const now = new Date();
       const autoTitle = `Meeting ${now.toISOString().split('T')[0]} ${now.toTimeString().slice(0, 5)}`;
       
+      // Use the first active meeting type, or null if none available
+      const defaultMeetingTypeId = meetingTypes[0]?.id || null;
+      
       const { data, error } = await supabase
         .from('meetings')
         .insert({
           user_id: user.id,
           auto_title: autoTitle,
-          meeting_type: 'General Legal Meeting',
+          meeting_type_id: defaultMeetingTypeId,
           status: 'recording',
           billable: profile?.last_billable_setting ?? false,
           billable_seconds: 0,
           hourly_rate_snapshot: profile?.default_hourly_rate ?? 250,
           duration_seconds: 0,
         })
-        .select()
+        .select('*, meeting_type:meeting_types(*)')
         .single();
       
       if (error) {
@@ -349,7 +354,7 @@ export function useMeetingDetails(meetingId: string | null) {
       
       const { data: meeting, error } = await supabase
         .from('meetings')
-        .select('*')
+        .select('*, meeting_type:meeting_types(*)')
         .eq('id', meetingId)
         .eq('user_id', user.id)
         .single();

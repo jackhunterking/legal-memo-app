@@ -15,9 +15,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { X, User } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
+import { useMeetingTypes } from "@/contexts/MeetingTypeContext";
 import { useContacts } from "@/contexts/ContactContext";
-import type { MeetingType, Contact } from "@/types";
-import { MEETING_TYPES } from "@/types";
+import type { Contact } from "@/types";
 import Colors from "@/constants/colors";
 
 export default function EditMeetingScreen() {
@@ -25,11 +25,12 @@ export default function EditMeetingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting } = useMeetingDetails(id || null);
   const { updateMeetingDetails, isUpdating } = useMeetings();
+  const { meetingTypes } = useMeetingTypes();
   const { contacts } = useContacts();
 
   const [title, setTitle] = useState(meeting?.title_override || meeting?.auto_title || "");
-  const [meetingType, setMeetingType] = useState<MeetingType>(
-    meeting?.meeting_type || "General Legal Meeting"
+  const [meetingTypeId, setMeetingTypeId] = useState<string | null>(
+    meeting?.meeting_type_id || null
   );
   const [clientName, setClientName] = useState(meeting?.client_name || "");
   const [contactId, setContactId] = useState<string | null>(
@@ -53,7 +54,7 @@ export default function EditMeetingScreen() {
     try {
       await updateMeetingDetails(id, {
         title_override: title.trim() || null,
-        meeting_type: meetingType,
+        meeting_type_id: meetingTypeId,
         client_name: clientName.trim() || null,
         primary_contact_id: contactId,
         billable,
@@ -118,22 +119,24 @@ export default function EditMeetingScreen() {
             <Text style={styles.label}>Meeting Type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.typeButtons}>
-                {MEETING_TYPES.map((type) => (
+                {meetingTypes.map((type) => (
                   <Pressable
-                    key={type}
+                    key={type.id}
                     style={[
                       styles.typeButton,
-                      meetingType === type && styles.typeButtonActive,
+                      meetingTypeId === type.id && styles.typeButtonActive,
+                      meetingTypeId === type.id && { borderColor: type.color },
                     ]}
-                    onPress={() => setMeetingType(type)}
+                    onPress={() => setMeetingTypeId(type.id)}
                   >
+                    <View style={[styles.typeDot, { backgroundColor: type.color }]} />
                     <Text
                       style={[
                         styles.typeButtonText,
-                        meetingType === type && styles.typeButtonTextActive,
+                        meetingTypeId === type.id && styles.typeButtonTextActive,
                       ]}
                     >
-                      {type}
+                      {type.name}
                     </Text>
                   </Pressable>
                 ))}
@@ -307,6 +310,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   typeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 10,
@@ -317,6 +323,11 @@ const styles = StyleSheet.create({
   typeButtonActive: {
     backgroundColor: Colors.accentLight,
     borderColor: Colors.accentLight,
+  },
+  typeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   typeButtonText: {
     fontSize: 14,

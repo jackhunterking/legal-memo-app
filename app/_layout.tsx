@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
+import { MeetingTypeProvider } from "@/contexts/MeetingTypeContext";
 import { ContactProvider } from "@/contexts/ContactContext";
 import { TaskProvider } from "@/contexts/TaskContext";
 import Colors from "@/constants/colors";
@@ -50,14 +51,16 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <MeetingProvider>
-            <ContactProvider>
-              <TaskProvider>
-                <StatusBar style="light" />
-                <RootLayoutNav />
-              </TaskProvider>
-            </ContactProvider>
-          </MeetingProvider>
+          <MeetingTypeProvider>
+            <MeetingProvider>
+              <ContactProvider>
+                <TaskProvider>
+                  <StatusBar style="light" />
+                  <RootLayoutNav />
+                </TaskProvider>
+              </ContactProvider>
+            </MeetingProvider>
+          </MeetingTypeProvider>
         </AuthProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
