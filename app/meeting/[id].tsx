@@ -11,7 +11,6 @@ import {
   TextInput,
   Modal,
   Share,
-  Animated,
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
@@ -30,7 +29,6 @@ import {
   Plus,
   CheckCircle2,
   Circle,
-  Bell,
   RefreshCw,
   Loader,
   Share2,
@@ -322,131 +320,128 @@ const QuickAddTaskModal = ({ visible, onClose, onAdd, isCreating }: any) => {
   );
 };
 
-// Floating Action Button Component
-const FloatingActionButton = ({
+// Meeting Actions Bottom Sheet Component
+const MeetingActionsSheet = ({
+  visible,
+  onClose,
   onAddTask,
   onEdit,
   onShare,
-  audioBarHeight,
+  onDelete,
 }: any) => {
-  const [expanded, setExpanded] = useState(false);
-  const animationValue = useRef(new Animated.Value(0)).current;
-
-  const toggleFAB = () => {
-    const toValue = expanded ? 0 : 1;
-    Animated.spring(animationValue, {
-      toValue,
-      useNativeDriver: true,
-      tension: 50,
-      friction: 7,
-    }).start();
-    setExpanded(!expanded);
-
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-  };
-
-  const actions = [
-    {
-      id: "add",
-      label: "Add Task",
-      icon: Plus,
-      onPress: () => {
-        toggleFAB();
-        setTimeout(onAddTask, 300);
-      },
-    },
-    {
-      id: "edit",
-      label: "Edit",
-      icon: Edit3,
-      onPress: () => {
-        toggleFAB();
-        setTimeout(onEdit, 300);
-      },
-    },
-    {
-      id: "share",
-      label: "Share",
-      icon: Share2,
-      onPress: () => {
-        toggleFAB();
-        setTimeout(onShare, 300);
-      },
-    },
-  ];
-
-  const mainButtonRotation = animationValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "45deg"],
-  });
-
-  const backdropOpacity = animationValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 0.4],
-  });
-
   return (
-    <>
-      <Animated.View
-        style={[
-          styles.fabBackdrop,
-          {
-            opacity: backdropOpacity,
-            pointerEvents: expanded ? "auto" : "none",
-          },
-        ]}
-        onTouchEnd={toggleFAB}
-      />
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.bottomSheetOverlay}>
+        <Pressable style={styles.bottomSheetBackdrop} onPress={onClose} />
+        <View style={styles.actionsSheetContainer}>
+          <View style={styles.bottomSheetHandle} />
+          <View style={styles.actionsSheetHeader}>
+            <Text style={styles.bottomSheetTitle}>Actions</Text>
+            <Pressable onPress={onClose} style={styles.bottomSheetClose}>
+              <X size={24} color={Colors.text} />
+            </Pressable>
+          </View>
 
-      <View
-        style={[
-          styles.fabContainer,
-          { bottom: audioBarHeight + 16, right: 16 },
-        ]}
-      >
-        {actions.map((action, index) => {
-          const translateY = animationValue.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, -(60 * (index + 1))],
-          });
-
-          const scale = animationValue.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 1],
-          });
-
-          const ActionIcon = action.icon;
-
-          return (
-            <Animated.View
-              key={action.id}
-              style={[
-                styles.fabSecondaryContainer,
-                {
-                  transform: [{ translateY }, { scale }],
-                },
-              ]}
+          <View style={styles.actionsSheetContent}>
+            <Pressable
+              style={styles.actionSheetItem}
+              onPress={() => {
+                onClose();
+                setTimeout(onAddTask, 300);
+              }}
             >
-              <Text style={styles.fabLabel}>{action.label}</Text>
-              <Pressable
-                style={styles.fabSecondary}
-                onPress={action.onPress}
-              >
-                <ActionIcon size={20} color={Colors.background} />
-              </Pressable>
-            </Animated.View>
-          );
-        })}
+              <View style={styles.actionSheetIconWrapper}>
+                <Plus size={20} color={Colors.accentLight} />
+              </View>
+              <View style={styles.actionSheetTextContainer}>
+                <Text style={styles.actionSheetItemTitle}>Add Task</Text>
+                <Text style={styles.actionSheetItemDescription}>
+                  Create a new action item for this meeting
+                </Text>
+              </View>
+            </Pressable>
 
-        <Pressable style={styles.fabMain} onPress={toggleFAB}>
-          <Animated.View style={{ transform: [{ rotate: mainButtonRotation }] }}>
-            <Plus size={28} color={Colors.background} />
-          </Animated.View>
-        </Pressable>
+            <Pressable
+              style={styles.actionSheetItem}
+              onPress={() => {
+                onClose();
+                setTimeout(onEdit, 300);
+              }}
+            >
+              <View style={styles.actionSheetIconWrapper}>
+                <Edit3 size={20} color={Colors.accentLight} />
+              </View>
+              <View style={styles.actionSheetTextContainer}>
+                <Text style={styles.actionSheetItemTitle}>Edit Meeting</Text>
+                <Text style={styles.actionSheetItemDescription}>
+                  Update meeting details and settings
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              style={styles.actionSheetItem}
+              onPress={() => {
+                onClose();
+                setTimeout(onShare, 300);
+              }}
+            >
+              <View style={styles.actionSheetIconWrapper}>
+                <Share2 size={20} color={Colors.accentLight} />
+              </View>
+              <View style={styles.actionSheetTextContainer}>
+                <Text style={styles.actionSheetItemTitle}>Share</Text>
+                <Text style={styles.actionSheetItemDescription}>
+                  Share meeting notes and summary
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.actionSheetDivider} />
+
+            <Pressable
+              style={styles.actionSheetItem}
+              onPress={() => {
+                onClose();
+                setTimeout(onDelete, 300);
+              }}
+            >
+              <View style={[styles.actionSheetIconWrapper, styles.actionSheetIconDanger]}>
+                <Trash2 size={20} color={Colors.error} />
+              </View>
+              <View style={styles.actionSheetTextContainer}>
+                <Text style={[styles.actionSheetItemTitle, styles.actionSheetItemTitleDanger]}>
+                  Delete Meeting
+                </Text>
+                <Text style={styles.actionSheetItemDescription}>
+                  Permanently remove this meeting
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+        </View>
       </View>
-    </>
+    </Modal>
+  );
+};
+
+// Floating Action Button Component
+const FloatingActionButton = ({ onPress, audioBarHeight }: any) => {
+  return (
+    <Pressable
+      style={[
+        styles.fabMain,
+        { bottom: audioBarHeight + 16, right: 16 },
+      ]}
+      onPress={onPress}
+    >
+      <Plus size={28} color={Colors.background} />
+    </Pressable>
   );
 };
 
@@ -464,6 +459,7 @@ export default function MeetingDetailScreen() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showEditMenu, setShowEditMenu] = useState(false);
+  const [showActionsSheet, setShowActionsSheet] = useState(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -560,7 +556,7 @@ export default function MeetingDetailScreen() {
           headerBytes[1] === 0x45 &&
           headerBytes[2] === 0xdf &&
           headerBytes[3] === 0xa3;
-      } catch (e) {
+      } catch {
         // Ignore
       }
 
@@ -611,13 +607,13 @@ export default function MeetingDetailScreen() {
       soundRef.current = sound;
       setAudioLoadError(false);
       setAudioErrorMessage(null);
-    } catch (error) {
+    } catch {
       setAudioLoadError(true);
       setAudioErrorMessage("Could not play audio");
     } finally {
       setIsAudioLoading(false);
     }
-  }, [meeting?.audio_path, meeting?.status, meeting?.audio_format, onPlaybackStatusUpdate]);
+  }, [meeting?.audio_path, onPlaybackStatusUpdate]);
 
   useEffect(() => {
     const canLoadAudio =
@@ -1159,13 +1155,25 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
 
       {/* FAB */}
       <FloatingActionButton
-        onAddTask={() => setShowQuickAdd(true)}
-        onEdit={() => router.push(`/edit-meeting?id=${id}` as any)}
-        onShare={handleShare}
+        onPress={() => {
+          if (Platform.OS !== "web") {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }
+          setShowActionsSheet(true);
+        }}
         audioBarHeight={audioBarHeight}
       />
 
       {/* Modals */}
+      <MeetingActionsSheet
+        visible={showActionsSheet}
+        onClose={() => setShowActionsSheet(false)}
+        onAddTask={() => setShowQuickAdd(true)}
+        onEdit={() => router.push(`/edit-meeting?id=${id}` as any)}
+        onShare={handleShare}
+        onDelete={handleDelete}
+      />
+
       <InsightsBottomSheet
         visible={showInsights}
         onClose={() => setShowInsights(false)}
@@ -1488,17 +1496,8 @@ const styles = StyleSheet.create({
     color: Colors.accentLight,
   },
   // FAB Styles
-  fabBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
-    zIndex: 998,
-  },
-  fabContainer: {
-    position: "absolute",
-    zIndex: 999,
-    alignItems: "flex-end",
-  },
   fabMain: {
+    position: "absolute",
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -1511,39 +1510,64 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  fabSecondaryContainer: {
-    position: "absolute",
-    bottom: 0,
+  // Actions Sheet Styles
+  actionsSheetContainer: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+  },
+  actionsSheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  actionsSheetContent: {
+    paddingVertical: 8,
+  },
+  actionSheetItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 16,
   },
-  fabLabel: {
-    fontSize: 14,
-    color: Colors.text,
-    backgroundColor: Colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    fontWeight: "500",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  fabSecondary: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Colors.accentLight,
+  actionSheetIconWrapper: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: `${Colors.accentLight}15`,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+  },
+  actionSheetIconDanger: {
+    backgroundColor: `${Colors.error}15`,
+  },
+  actionSheetTextContainer: {
+    flex: 1,
+  },
+  actionSheetItemTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  actionSheetItemTitleDanger: {
+    color: Colors.error,
+  },
+  actionSheetItemDescription: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  actionSheetDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: 8,
+    marginHorizontal: 20,
   },
   // Bottom Sheet Styles
   bottomSheetOverlay: {
