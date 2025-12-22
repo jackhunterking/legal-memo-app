@@ -1824,6 +1824,7 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
             {title}
           </Text>
         </View>
+        <View style={styles.headerSpacer} />
       </View>
 
       {/* Scrollable Content */}
@@ -2389,12 +2390,17 @@ const styles = StyleSheet.create({
   },
   headerCenter: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: "600",
     color: Colors.text,
-    marginBottom: 2,
+    textAlign: "center",
+  },
+  headerSpacer: {
+    width: 32,
   },
   content: {
     flex: 1,
