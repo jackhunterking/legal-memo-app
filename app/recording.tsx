@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Pause, Play, Square, Mic } from "lucide-react-native";
+import { Pause, Play, Square, Mic, ChevronLeft, Settings } from "lucide-react-native";
+import * as Linking from "expo-linking";
 import * as Haptics from "expo-haptics";
 import {
   useAudioRecorder,
@@ -274,6 +275,11 @@ export default function RecordingScreen() {
   if (hasPermission === null) {
     return (
       <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <ChevronLeft size={28} color={Colors.text} />
+          </Pressable>
+        </View>
         <View style={styles.permissionContainer}>
           <View style={styles.permissionIconContainer}>
             <Mic size={48} color={Colors.accent} />
@@ -282,6 +288,12 @@ export default function RecordingScreen() {
           <Text style={styles.permissionText}>
             Requesting microphone permission...
           </Text>
+          <Pressable 
+            style={styles.secondaryButton} 
+            onPress={() => router.back()}
+          >
+            <Text style={styles.secondaryButtonText}>Go Back</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -290,6 +302,11 @@ export default function RecordingScreen() {
   if (!hasPermission || permissionDenied) {
     return (
       <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <ChevronLeft size={28} color={Colors.text} />
+          </Pressable>
+        </View>
         <View style={styles.permissionContainer}>
           <View style={styles.permissionIconContainer}>
             <Mic size={48} color={Colors.accent} />
@@ -304,6 +321,15 @@ export default function RecordingScreen() {
           >
             <Text style={styles.permissionButtonText}>Grant Permission</Text>
           </Pressable>
+          {Platform.OS !== 'web' && (
+            <Pressable 
+              style={styles.settingsButton} 
+              onPress={() => Linking.openSettings()}
+            >
+              <Settings size={18} color={Colors.accent} />
+              <Text style={styles.settingsButtonText}>Open Settings</Text>
+            </Pressable>
+          )}
           <Pressable 
             style={styles.secondaryButton} 
             onPress={() => router.back()}
@@ -429,6 +455,36 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 16,
     color: Colors.textSecondary,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  settingsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    marginBottom: 12,
+  },
+  settingsButtonText: {
+    fontSize: 16,
+    fontWeight: "500" as const,
+    color: Colors.accent,
   },
   recordingIndicator: {
     marginBottom: 40,
