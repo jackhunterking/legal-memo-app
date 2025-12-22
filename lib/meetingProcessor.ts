@@ -117,41 +117,51 @@ async function attributeSpeakers(transcriptText: string, durationSeconds: number
     }];
   }
 
-  const prompt = `You are an expert at analyzing legal meeting transcripts and identifying different speakers.
+  const prompt = `You are an expert meeting analyst for a law firm. Your job is to identify different speakers in ANY type of meeting recording.
 
 TRANSCRIPT:
 ${transcriptText}
 
+CONTEXT: This is a recording from a law firm. It could be:
+- A client consultation
+- An internal team meeting
+- A phone call
+- A casual conversation
+- A case discussion
+- Administrative planning
+- ANY other type of meeting or conversation
+
 INSTRUCTIONS:
-1. Carefully analyze this transcript and split it into segments based on when the speaker changes.
-2. Identify who is likely the LAWYER based on:
-   - Uses legal terminology (e.g., "liability", "damages", "statute", "precedent", "jurisdiction")
-   - Gives professional advice or recommendations
-   - Asks diagnostic/clarifying questions about the legal matter
-   - Explains legal processes or procedures
-   - Uses phrases like "In my opinion", "I would advise", "From a legal standpoint"
+1. Split the transcript into segments based on when the speaker changes.
+2. Identify speakers using these guidelines:
 
-3. Identify who is likely the CLIENT based on:
-   - Describes their personal situation or problem
-   - Asks questions seeking advice
-   - Expresses concerns or worries
-   - Provides factual details about events or circumstances
-   - Uses phrases like "What happened was", "I'm worried about", "What should I do"
+   LAWYER (law firm staff - attorneys, paralegals, assistants):
+   - Leads or facilitates the conversation
+   - Provides information, advice, or updates
+   - Uses professional/formal language
+   - Asks clarifying questions
+   - Discusses schedules, cases, or procedures
 
-4. Label others as OTHER if they seem to be third parties (witnesses, other attorneys, etc.)
+   CLIENT (external person receiving services):
+   - Describes their situation or needs
+   - Asks questions seeking help or information
+   - Provides personal details or facts
+   - Responds to questions from staff
 
-5. For each segment, estimate its position as a percentage (0-100) through the conversation.
-   - First segment starts at 0%
-   - Last segment should end near 100%
-   - Distribute segments proportionally based on text length
+   OTHER (third parties):
+   - Witnesses, opposing counsel, vendors, etc.
+   - Anyone who isn't clearly staff or client
 
-6. If speaker names are mentioned in the conversation, include them.
+3. For each segment, estimate its position (0-100%) through the conversation.
 
-IMPORTANT: 
-- Create meaningful segments - don't split mid-sentence
-- Each segment should contain complete thoughts from one speaker
-- If you can't determine the speaker role, use UNKNOWN
-- Be conservative - only assign LAWYER/CLIENT if you're reasonably confident`;
+4. Include speaker names if mentioned in the conversation.
+
+CRITICAL RULES:
+- ALWAYS create at least one segment with the full transcript text
+- If there's only one speaker or you can't distinguish, use LAWYER as default (it's a law firm recording)
+- Never return empty segments - include ALL the spoken content
+- It's okay to use UNKNOWN if genuinely uncertain, but prefer making a reasonable guess
+- Don't split mid-sentence - keep complete thoughts together`;
 
   try {
     const result = await generateObject({
@@ -203,6 +213,170 @@ function formatTimeMs(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Generate a smart fallback summary from the transcript text
+ */
+function generateSmartFallbackSummary(transcriptText: string, durationSeconds: number): string {
+  const durationMinutes = Math.round(durationSeconds / 60);
+  
+  if (!transcriptText || transcriptText.trim().length < 10) {
+    return `${durationMinutes}-minute recording with limited audio clarity.`;
+  }
+  
+  // Extract the first meaningful sentence or phrase
+  const cleanText = transcriptText.trim();
+  const words = cleanText.split(/\s+/);
+  const wordCount = words.length;
+  
+  // Try to identify the nature of the conversation
+  const lowerText = cleanText.toLowerCase();
+  
+  // Check for common conversation types
+  if (lowerText.includes('schedule') || lowerText.includes('appointment') || lowerText.includes('calendar')) {
+    return `${durationMinutes}-minute conversation about scheduling and availability.`;
+  }
+  if (lowerText.includes('contract') || lowerText.includes('agreement') || lowerText.includes('document')) {
+    return `${durationMinutes}-minute discussion about documents or agreements.`;
+  }
+  if (lowerText.includes('case') || lowerText.includes('matter') || lowerText.includes('client')) {
+    return `${durationMinutes}-minute discussion about a case or client matter.`;
+  }
+  if (lowerText.includes('question') || lowerText.includes('help') || lowerText.includes('need')) {
+    return `${durationMinutes}-minute consultation addressing questions and concerns.`;
+  }
+  if (lowerText.includes('update') || lowerText.includes('status') || lowerText.includes('progress')) {
+    return `${durationMinutes}-minute status update and progress discussion.`;
+  }
+  if (lowerText.includes('meeting') || lowerText.includes('call') || lowerText.includes('discuss')) {
+    return `${durationMinutes}-minute meeting covering various topics.`;
+  }
+  
+  // Generic but still useful summary
+  if (wordCount > 50) {
+    return `${durationMinutes}-minute recorded conversation (${wordCount} words transcribed).`;
+  }
+  
+  return `${durationMinutes}-minute recording captured for documentation.`;
+}
+
+/**
+ * Extract topics from transcript text as a fallback
+ */
+function extractTopicsFromTranscript(transcriptText: string): string[] {
+  if (!transcriptText || transcriptText.trim().length < 10) {
+    return ['General discussion'];
+  }
+  
+  const topics: string[] = [];
+  const lowerText = transcriptText.toLowerCase();
+  
+  // Common topics in law firm contexts
+  const topicPatterns = [
+    { keywords: ['schedule', 'appointment', 'calendar', 'meeting', 'available'], topic: 'Scheduling' },
+    { keywords: ['contract', 'agreement', 'sign', 'document'], topic: 'Documents' },
+    { keywords: ['case', 'matter', 'lawsuit', 'litigation'], topic: 'Case Discussion' },
+    { keywords: ['client', 'consultation', 'advice'], topic: 'Client Consultation' },
+    { keywords: ['deadline', 'due', 'filing', 'court'], topic: 'Deadlines' },
+    { keywords: ['payment', 'invoice', 'billing', 'fee', 'cost'], topic: 'Billing' },
+    { keywords: ['update', 'status', 'progress', 'report'], topic: 'Status Update' },
+    { keywords: ['question', 'concern', 'issue', 'problem'], topic: 'Questions & Concerns' },
+    { keywords: ['plan', 'strategy', 'next steps', 'action'], topic: 'Planning' },
+    { keywords: ['review', 'analyze', 'look at', 'examine'], topic: 'Review' },
+  ];
+  
+  for (const pattern of topicPatterns) {
+    if (pattern.keywords.some(keyword => lowerText.includes(keyword))) {
+      topics.push(pattern.topic);
+    }
+    if (topics.length >= 3) break; // Limit to 3 topics
+  }
+  
+  if (topics.length === 0) {
+    topics.push('General discussion');
+  }
+  
+  return topics;
+}
+
+/**
+ * Generate a complete fallback AI output when generation fails entirely
+ */
+function generateCompleteFallback(
+  transcriptText: string, 
+  durationSeconds: number, 
+  attributedSegments: AttributedSegment[]
+): {
+  meeting_overview: {
+    one_sentence_summary: string;
+    participants: { label: 'LAWYER' | 'CLIENT' | 'OTHER' | 'UNKNOWN'; name: string | null }[];
+    topics: string[];
+  };
+  key_facts_stated: any[];
+  legal_issues_discussed: any[];
+  decisions_made: any[];
+  risks_or_concerns_raised: any[];
+  follow_up_actions: any[];
+  open_questions: any[];
+  tasks: any[];
+} {
+  // Extract participants from attributed segments
+  const participantLabels = [...new Set(attributedSegments.map(s => s.speaker_label))];
+  const participants = participantLabels.map(label => ({
+    label: label as 'LAWYER' | 'CLIENT' | 'OTHER' | 'UNKNOWN',
+    name: attributedSegments.find(s => s.speaker_label === label)?.speaker_name || null,
+  }));
+  
+  // Generate smart summary
+  const summary = generateSmartFallbackSummary(transcriptText, durationSeconds);
+  
+  // Extract topics
+  const topics = extractTopicsFromTranscript(transcriptText);
+  
+  // Try to extract any key facts from the transcript
+  const keyFacts: any[] = [];
+  if (transcriptText && transcriptText.length > 50) {
+    // Look for dates
+    const dateMatch = transcriptText.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}/i);
+    if (dateMatch) {
+      keyFacts.push({
+        fact: `Date mentioned: ${dateMatch[0]}`,
+        stated_by: 'UNKNOWN' as const,
+        support: [],
+        certainty: 'unclear' as const,
+      });
+    }
+    
+    // Look for names (capitalized words)
+    const nameMatch = transcriptText.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/g);
+    if (nameMatch && nameMatch.length > 0) {
+      const uniqueNames = [...new Set(nameMatch)].filter(n => n.length > 2).slice(0, 3);
+      if (uniqueNames.length > 0) {
+        keyFacts.push({
+          fact: `Names mentioned: ${uniqueNames.join(', ')}`,
+          stated_by: 'UNKNOWN' as const,
+          support: [],
+          certainty: 'unclear' as const,
+        });
+      }
+    }
+  }
+  
+  return {
+    meeting_overview: {
+      one_sentence_summary: summary,
+      participants: participants.length > 0 ? participants : [{ label: 'UNKNOWN' as const, name: null }],
+      topics,
+    },
+    key_facts_stated: keyFacts,
+    legal_issues_discussed: [],
+    decisions_made: [],
+    risks_or_concerns_raised: [],
+    follow_up_actions: [],
+    open_questions: [],
+    tasks: [],
+  };
 }
 
 export async function processMeeting(
@@ -313,37 +487,85 @@ export async function processMeeting(
       })
       .join('\n\n');
 
-    const summaryPrompt = `You are a legal meeting analyst. Analyze the following meeting transcript with identified speakers.
+    const summaryPrompt = `You are a Law Firm Meeting Intelligence Assistant. Your job is to comprehensively document and summarize ANY meeting or conversation recorded at a law firm.
 
-TRANSCRIPT WITH SPEAKER LABELS:
+=== TRANSCRIPT ===
 ${formattedTranscript || 'No transcript available.'}
 
-MEETING DURATION: ${durationSeconds} seconds
+=== MEETING DURATION ===
+${durationSeconds} seconds (${Math.round(durationSeconds / 60)} minutes)
 
-INSTRUCTIONS:
-1. Provide a one-sentence summary focusing on the legal matter discussed
-2. Confirm or refine participant identification - verify if LAWYER/CLIENT labels are accurate based on the content
-3. List the main topics discussed
-4. Extract key facts - note who stated each fact
-5. Identify legal issues discussed - note who raised them
-6. Document decisions made
-7. List risks or concerns - note who raised each concern
-8. Extract follow-up actions with clear ownership (who must do what)
-9. Note open questions that remain unresolved
+=== YOUR ROLE ===
+You help lawyers and paralegals by creating useful summaries of their meetings. This could be:
+- Client consultations about legal matters
+- Internal team discussions
+- Phone calls with clients or opposing counsel
+- Administrative planning meetings
+- Casual check-ins or status updates
+- ANY conversation worth documenting
 
-10. **IMPORTANT - Extract actionable tasks:**
-   - Create specific, concrete tasks based on what was discussed
-   - For each task, provide:
-     * Clear, actionable title (e.g., "Draft contract amendment", "Schedule follow-up call")
-     * Brief description if needed
-     * Priority (low/medium/high) based on urgency mentioned
-     * Owner - who should do this task (use the actual role: LAWYER for attorney tasks, CLIENT for client tasks)
-     * Suggested deadline if any timeframe was mentioned (ISO format)
-   
-   Examples of lawyer tasks: draft documents, file motions, research case law, schedule court dates
-   Examples of client tasks: gather documents, provide information, sign paperwork, make decisions
+=== CRITICAL RULES - FOLLOW THESE EXACTLY ===
 
-If the transcript is empty or unclear, provide reasonable defaults indicating limited information was available.`;
+1. **ALWAYS PROVIDE A MEANINGFUL SUMMARY**
+   - Never say "no content discussed" or "no legal matters"
+   - Even if the content seems trivial, summarize what WAS said
+   - Example: "Brief check-in call discussing scheduling and availability"
+
+2. **DOCUMENT EVERYTHING DISCUSSED**
+   - Legal topics, case updates, deadlines
+   - Administrative matters, scheduling, logistics
+   - Personal updates, relationship building
+   - Questions asked, even if unanswered
+   - ANY information that might be useful later
+
+3. **EXTRACT ALL FACTS AND INFORMATION**
+   - Names, dates, amounts, locations mentioned
+   - Decisions made (even small ones)
+   - Commitments or promises made
+   - Concerns or worries expressed
+
+4. **IDENTIFY ACTION ITEMS BROADLY**
+   - Things someone said they would do
+   - Things that need to happen next
+   - Follow-ups mentioned
+   - Deadlines or timeframes discussed
+
+=== OUTPUT INSTRUCTIONS ===
+
+1. ONE-SENTENCE SUMMARY: Write a clear, informative summary of the meeting's main purpose or outcome. Make it specific to what was discussed.
+
+2. PARTICIPANTS: List who was in the meeting with their roles.
+
+3. TOPICS: List 2-5 main topics or themes discussed.
+
+4. KEY FACTS: Extract important information mentioned:
+   - Dates, deadlines, appointments
+   - Names of people, places, cases
+   - Numbers, amounts, quantities
+   - Specific details that might be referenced later
+
+5. LEGAL ISSUES (if any): Note any legal topics, but don't force this - leave empty if none discussed.
+
+6. DECISIONS: What was agreed upon or decided?
+
+7. RISKS/CONCERNS: What worries or problems were mentioned?
+
+8. FOLLOW-UP ACTIONS: What needs to happen next? Who is responsible?
+
+9. OPEN QUESTIONS: What remains unresolved or needs clarification?
+
+10. TASKS: Create specific, actionable tasks from the discussion:
+    - "Schedule follow-up call with [name]"
+    - "Send documents to client"
+    - "Review contract by [date]"
+    - "Follow up on [topic]"
+
+=== HANDLING POOR AUDIO/SHORT RECORDINGS ===
+If the transcript is unclear, short, or fragmentary:
+- Summarize what you CAN understand
+- Note that audio quality was limited
+- Still extract any useful information present
+- Use "Brief recording" or "Partial conversation" as context`;
 
     let aiOutput;
     try {
@@ -354,29 +576,25 @@ If the transcript is empty or unclear, provide reasonable defaults indicating li
       console.log('[MeetingProcessor] AI summary generated');
       console.log('[MeetingProcessor] Tasks extracted:', aiOutput.tasks?.length || 0);
       console.log('[MeetingProcessor] Participants identified:', aiOutput.meeting_overview.participants.length);
+      
+      // Validate that we got a meaningful summary - if not, enhance it
+      if (!aiOutput.meeting_overview.one_sentence_summary || 
+          aiOutput.meeting_overview.one_sentence_summary.toLowerCase().includes('no legal') ||
+          aiOutput.meeting_overview.one_sentence_summary.toLowerCase().includes('no content') ||
+          aiOutput.meeting_overview.one_sentence_summary.length < 20) {
+        console.log('[MeetingProcessor] AI returned weak summary, enhancing...');
+        aiOutput.meeting_overview.one_sentence_summary = generateSmartFallbackSummary(transcriptText, durationSeconds);
+      }
+      
+      // Ensure we have at least one topic
+      if (!aiOutput.meeting_overview.topics || aiOutput.meeting_overview.topics.length === 0) {
+        aiOutput.meeting_overview.topics = extractTopicsFromTranscript(transcriptText);
+      }
+      
     } catch (aiError) {
       console.error('[MeetingProcessor] AI generation error:', aiError);
-      // Use fallback summary with speaker info from attribution
-      const fallbackParticipants = [...new Set(attributedSegments.map(s => s.speaker_label))]
-        .map(label => ({ 
-          label: label as 'LAWYER' | 'CLIENT' | 'OTHER' | 'UNKNOWN', 
-          name: attributedSegments.find(s => s.speaker_label === label)?.speaker_name || null 
-        }));
-      
-      aiOutput = {
-        meeting_overview: {
-          one_sentence_summary: 'Meeting recording processed with limited transcript clarity.',
-          participants: fallbackParticipants.length > 0 ? fallbackParticipants : [{ label: 'UNKNOWN' as const, name: null }],
-          topics: ['General discussion'],
-        },
-        key_facts_stated: [],
-        legal_issues_discussed: [],
-        decisions_made: [],
-        risks_or_concerns_raised: [],
-        follow_up_actions: [],
-        open_questions: [],
-        tasks: [],
-      };
+      // Use enhanced fallback summary with speaker info from attribution
+      aiOutput = generateCompleteFallback(transcriptText, durationSeconds, attributedSegments);
     }
     
     // Step 4: Extract actions (part of AI output)
