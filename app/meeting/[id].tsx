@@ -327,7 +327,11 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
   const [showPriorityOptions, setShowPriorityOptions] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-
+  const shortMeetingName = useMemo(() => {
+    if (!meetingTitle) return '';
+    const words = meetingTitle.split(/\s+/).filter((w: string) => w.length > 0);
+    return words.slice(0, 3).join(' ');
+  }, [meetingTitle]);
 
   const deadlineDate = useMemo(() => {
     if (selectedDeadline === 'custom') return customDeadline;
@@ -387,6 +391,21 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
     }
   };
 
+  const formatReminderDateTime = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const dateStr = date.toDateString() === today.toDateString() 
+      ? 'Today' 
+      : date.toDateString() === tomorrow.toDateString()
+      ? 'Tomorrow'
+      : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return `${dateStr} at ${timeStr}`;
+  };
+
   const getReminderLabel = () => {
     const option = REMINDER_OPTIONS.find(o => o.key === selectedReminder);
     return option?.label || 'No reminder';
@@ -415,6 +434,13 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
           </View>
 
           <ScrollView style={styles.addTaskContent} showsVerticalScrollIndicator={false}>
+            {shortMeetingName && (
+              <View style={styles.meetingContext}>
+                <Text style={styles.meetingContextLabel}>Meeting</Text>
+                <Text style={styles.meetingContextName} numberOfLines={1}>{shortMeetingName}</Text>
+              </View>
+            )}
+
             <View style={styles.taskInputContainer}>
               <TextInput
                 style={styles.taskTitleInput}
@@ -451,34 +477,36 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
             </Pressable>
 
             {showDeadlineOptions && (
-              <View style={styles.optionExpandedContent}>
+              <View style={styles.optionChipsContainer}>
                 {DEADLINE_OPTIONS.map((option) => (
                   <Pressable
                     key={option.key}
-                    style={styles.optionListItem}
+                    style={[
+                      styles.optionChip,
+                      selectedDeadline === option.key && styles.optionChipActive,
+                    ]}
                     onPress={() => {
                       setSelectedDeadline(option.key);
                       if (option.key === 'none') {
                         setSelectedReminder('none');
                         setCustomDeadline(null);
                       }
-                      setShowDeadlineOptions(false);
                       if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
                     <Text style={[
-                      styles.optionListItemText,
-                      selectedDeadline === option.key && styles.optionListItemTextActive,
+                      styles.optionChipText,
+                      selectedDeadline === option.key && styles.optionChipTextActive,
                     ]}>
                       {option.label}
                     </Text>
-                    {selectedDeadline === option.key && (
-                      <CheckCircle2 size={18} color={Colors.accentLight} fill={Colors.accentLight} />
-                    )}
                   </Pressable>
                 ))}
                 <Pressable
-                  style={styles.optionListItem}
+                  style={[
+                    styles.optionChip,
+                    selectedDeadline === 'custom' && styles.optionChipActive,
+                  ]}
                   onPress={() => {
                     if (Platform.OS !== 'web') {
                       setShowDatePicker(true);
@@ -500,23 +528,26 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
                         }
                       }
                     }
-                    setShowDeadlineOptions(false);
                     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   }}
                 >
-                  <View style={styles.optionListItemLeft}>
-                    <Calendar size={16} color={Colors.textSecondary} />
-                    <Text style={[
-                      styles.optionListItemText,
-                      selectedDeadline === 'custom' && styles.optionListItemTextActive,
-                    ]}>
-                      Custom date
-                    </Text>
-                  </View>
-                  {selectedDeadline === 'custom' && (
-                    <CheckCircle2 size={18} color={Colors.accentLight} fill={Colors.accentLight} />
-                  )}
+                  <Calendar size={14} color={selectedDeadline === 'custom' ? Colors.background : Colors.textSecondary} />
+                  <Text style={[
+                    styles.optionChipText,
+                    selectedDeadline === 'custom' && styles.optionChipTextActive,
+                  ]}>
+                    Custom date
+                  </Text>
                 </Pressable>
+              </View>
+            )}
+            
+            {selectedDeadline !== 'none' && deadlineDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Calendar size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Due: {formatDeadlineDate(deadlineDate)}
+                </Text>
               </View>
             )}
 
@@ -549,28 +580,36 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
             </Pressable>
 
             {showReminderOptions && selectedDeadline !== 'none' && (
-              <View style={styles.optionExpandedContent}>
+              <View style={styles.optionChipsContainer}>
                 {REMINDER_OPTIONS.map((option) => (
                   <Pressable
                     key={option.key}
-                    style={styles.optionListItem}
+                    style={[
+                      styles.optionChip,
+                      selectedReminder === option.key && styles.optionChipActive,
+                    ]}
                     onPress={() => {
                       setSelectedReminder(option.key);
-                      setShowReminderOptions(false);
                       if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
                     <Text style={[
-                      styles.optionListItemText,
-                      selectedReminder === option.key && styles.optionListItemTextActive,
+                      styles.optionChipText,
+                      selectedReminder === option.key && styles.optionChipTextActive,
                     ]}>
                       {option.label}
                     </Text>
-                    {selectedReminder === option.key && (
-                      <CheckCircle2 size={18} color={Colors.accentLight} fill={Colors.accentLight} />
-                    )}
                   </Pressable>
                 ))}
+              </View>
+            )}
+            
+            {selectedReminder !== 'none' && reminderDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Bell size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Remind: {formatReminderDateTime(reminderDate)}
+                </Text>
               </View>
             )}
 
@@ -597,29 +636,27 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
             </Pressable>
 
             {showPriorityOptions && (
-              <View style={styles.optionExpandedContent}>
+              <View style={styles.optionChipsContainer}>
                 {PRIORITY_OPTIONS.map((option) => (
                   <Pressable
                     key={option.key}
-                    style={styles.optionListItem}
+                    style={[
+                      styles.optionChip,
+                      selectedPriority === option.key && styles.optionChipActive,
+                      { borderColor: option.color },
+                    ]}
                     onPress={() => {
                       setSelectedPriority(option.key);
-                      setShowPriorityOptions(false);
                       if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
-                    <View style={styles.optionListItemLeft}>
-                      <Flag size={16} color={option.color} />
-                      <Text style={[
-                        styles.optionListItemText,
-                        selectedPriority === option.key && styles.optionListItemTextActive,
-                      ]}>
-                        {option.label}
-                      </Text>
-                    </View>
-                    {selectedPriority === option.key && (
-                      <CheckCircle2 size={18} color={Colors.accentLight} fill={Colors.accentLight} />
-                    )}
+                    <Flag size={14} color={selectedPriority === option.key ? Colors.background : option.color} />
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedPriority === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
                   </Pressable>
                 ))}
               </View>
@@ -2141,37 +2178,70 @@ const styles = StyleSheet.create({
   },
   addTaskContent: {
     paddingHorizontal: 20,
-    maxHeight: 500,
+    maxHeight: 400,
+  },
+  meetingContext: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  meetingContextLabel: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  meetingContextName: {
+    fontSize: 14,
+    fontWeight: "600" as const,
+    color: Colors.text,
   },
   taskInputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   taskTitleInput: {
-    fontSize: 17,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
     color: Colors.text,
-    padding: 0,
-    minHeight: 100,
+    minHeight: 80,
     textAlignVertical: "top" as const,
   },
   optionRow: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    paddingVertical: 12,
-    marginBottom: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   optionRowDisabled: {
     opacity: 0.5,
   },
   optionIconWrapper: {
-    marginRight: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    marginRight: 12,
   },
   optionTextContainer: {
     flex: 1,
   },
   optionLabel: {
-    fontSize: 16,
+    fontSize: 14,
+    fontWeight: "600" as const,
     color: Colors.text,
     marginBottom: 2,
   },
@@ -2189,36 +2259,36 @@ const styles = StyleSheet.create({
   optionValueDisabled: {
     color: Colors.textMuted,
   },
-  optionExpandedContent: {
+  optionChipsContainer: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 8,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  optionChip: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
     backgroundColor: Colors.surface,
-    borderRadius: 8,
-    marginBottom: 12,
-    marginTop: 4,
-    overflow: "hidden" as const,
     borderWidth: 1,
     borderColor: Colors.border,
+    gap: 6,
   },
-  optionListItem: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+  optionChipActive: {
+    backgroundColor: Colors.accentLight,
+    borderColor: Colors.accentLight,
   },
-  optionListItemLeft: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 10,
+  optionChipText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: "500" as const,
   },
-  optionListItemText: {
-    fontSize: 15,
-    color: Colors.text,
-  },
-  optionListItemTextActive: {
+  optionChipTextActive: {
+    color: Colors.background,
     fontWeight: "600" as const,
-    color: Colors.accentLight,
   },
   addTaskFooter: {
     paddingHorizontal: 20,
@@ -2240,7 +2310,21 @@ const styles = StyleSheet.create({
     fontWeight: "600" as const,
     color: Colors.background,
   },
-
+  selectedDateTimeContainer: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    backgroundColor: `${Colors.accentLight}15`,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  selectedDateTimeText: {
+    fontSize: 13,
+    color: Colors.accentLight,
+    fontWeight: "600" as const,
+  },
   datePickerOverlay: {
     flex: 1,
     justifyContent: "flex-end" as const,
