@@ -90,6 +90,7 @@ export default function MeetingDetailScreen() {
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [audioLoadError, setAudioLoadError] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
   const progressBarRef = useRef<View>(null);
@@ -121,14 +122,16 @@ export default function MeetingDetailScreen() {
 
     try {
       setIsAudioLoading(true);
+      setAudioLoadError(false);
       console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
 
       const { data } = supabase.storage
-        .from('recordings')
+        .from('meeting-audio')
         .getPublicUrl(meeting.audio_path);
 
       if (!data?.publicUrl) {
         console.error('[AudioPlayer] No public URL found');
+        setAudioLoadError(true);
         return;
       }
 
@@ -146,27 +149,29 @@ export default function MeetingDetailScreen() {
       );
 
       soundRef.current = sound;
+      setAudioLoadError(false);
       console.log('[AudioPlayer] Audio loaded successfully');
     } catch (error) {
       console.error('[AudioPlayer] Error loading audio:', error);
+      setAudioLoadError(true);
     } finally {
       setIsAudioLoading(false);
     }
   }, [meeting?.audio_path, onPlaybackStatusUpdate]);
 
   useEffect(() => {
-    if (meeting?.audio_path) {
+    if (meeting?.audio_path && meeting?.status === 'ready') {
       loadAudio();
     }
 
     return () => {
       if (soundRef.current) {
         console.log('[AudioPlayer] Unloading sound');
-        soundRef.current.unloadAsync();
+        soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
       }
     };
-  }, [meeting?.audio_path, loadAudio]);
+  }, [meeting?.audio_path, meeting?.status, loadAudio]);
 
   const handlePlayPause = async () => {
     if (!soundRef.current) {
@@ -814,39 +819,48 @@ export default function MeetingDetailScreen() {
         </View>
       </Modal>
 
-      {meeting.audio_path && (
+      {meeting.audio_path && meeting.status === 'ready' && (
         <View style={styles.audioBar}>
-          <Pressable
-            style={styles.playButton}
-            onPress={handlePlayPause}
-            disabled={isAudioLoading}
-          >
-            {isAudioLoading ? (
-              <ActivityIndicator size="small" color={Colors.text} />
-            ) : isPlaying ? (
-              <Pause size={20} color={Colors.text} fill={Colors.text} />
-            ) : (
-              <Play size={20} color={Colors.text} fill={Colors.text} />
-            )}
-          </Pressable>
-          
-          <Pressable
-            style={styles.audioProgressContainer}
-            onPress={handleSeek}
-          >
-            <View
-              ref={progressBarRef}
-              style={styles.audioProgress}
-              onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
-            >
-              <View style={[styles.audioProgressBar, { width: `${progress}%` }]} />
-              <View style={[styles.audioProgressThumb, { left: `${progress}%` }]} />
+          {audioLoadError ? (
+            <View style={styles.audioErrorContainer}>
+              <AlertTriangle size={16} color={Colors.warning} />
+              <Text style={styles.audioErrorText}>Audio unavailable</Text>
             </View>
-          </Pressable>
+          ) : (
+            <>
+              <Pressable
+                style={styles.playButton}
+                onPress={handlePlayPause}
+                disabled={isAudioLoading}
+              >
+                {isAudioLoading ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : isPlaying ? (
+                  <Pause size={20} color={Colors.text} fill={Colors.text} />
+                ) : (
+                  <Play size={20} color={Colors.text} fill={Colors.text} />
+                )}
+              </Pressable>
+              
+              <Pressable
+                style={styles.audioProgressContainer}
+                onPress={handleSeek}
+              >
+                <View
+                  ref={progressBarRef}
+                  style={styles.audioProgress}
+                  onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
+                >
+                  <View style={[styles.audioProgressBar, { width: `${progress}%` }]} />
+                  <View style={[styles.audioProgressThumb, { left: `${progress}%` }]} />
+                </View>
+              </Pressable>
 
-          <Text style={styles.audioTime}>
-            {formatTime(positionMillis)} / {formatTime(durationMillis || (meeting.duration_seconds * 1000))}
-          </Text>
+              <Text style={styles.audioTime}>
+                {formatTime(positionMillis)} / {formatTime(durationMillis || (meeting.duration_seconds * 1000))}
+              </Text>
+            </>
+          )}
         </View>
       )}
     </SafeAreaView>
@@ -1222,6 +1236,17 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     minWidth: 80,
     textAlign: 'right',
+  },
+  audioErrorContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  audioErrorText: {
+    fontSize: 13,
+    color: Colors.textMuted,
   },
   taskHeaderActions: {
     flexDirection: 'row',
