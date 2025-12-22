@@ -41,13 +41,18 @@ import {
   Flag,
   ChevronRight,
   Edit2,
+  User,
+  FileText,
+  Check,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import { useTasks, useMeetingTasks } from "@/contexts/TaskContext";
+import { useContacts } from "@/contexts/ContactContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import type { MeetingTask } from "@/types";
+import { MEETING_TYPES } from "@/types";
 
 // Unified Action Item type
 type UnifiedAction = {
@@ -1308,11 +1313,12 @@ export default function MeetingDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting, isLoading } = useMeetingDetails(id || null);
-  const { deleteMeeting, retryTranscoding, isTranscoding } = useMeetings();
+  const { deleteMeeting, retryTranscoding, isTranscoding, updateMeetingDetails } = useMeetings();
   const { data: tasks = [], isLoading: tasksLoading } = useMeetingTasks(
     id || null
   );
   const { createTask, updateTask, deleteTask, isCreating, isUpdating } = useTasks();
+  const { contacts } = useContacts();
 
   const [showInsights, setShowInsights] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
@@ -1320,6 +1326,8 @@ export default function MeetingDetailScreen() {
   const [showEditMenu, setShowEditMenu] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [editingTask, setEditingTask] = useState<MeetingTask | null>(null);
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
+  const [showMeetingTypeDropdown, setShowMeetingTypeDropdown] = useState(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -1787,6 +1795,158 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
 
       {/* Scrollable Content */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Meeting Details Card */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Meeting Details</Text>
+          
+          {/* Total Time */}
+          <View style={styles.detailRow}>
+            <View style={styles.detailIconWrapper}>
+              <Clock size={18} color={Colors.accentLight} />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Total Time Logged</Text>
+              <Text style={styles.detailValue}>{formatDuration(meeting.duration_seconds)}</Text>
+            </View>
+          </View>
+
+          {/* Contact Selector */}
+          <Pressable
+            style={styles.detailRow}
+            onPress={() => {
+              setShowContactDropdown(!showContactDropdown);
+              setShowMeetingTypeDropdown(false);
+              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          >
+            <View style={styles.detailIconWrapper}>
+              <User size={18} color={Colors.accentLight} />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Contact</Text>
+              <Text style={styles.detailValue}>
+                {meeting.primary_contact_id
+                  ? contacts.find(c => c.id === meeting.primary_contact_id)?.full_name || 'Unknown Contact'
+                  : meeting.client_name || 'Not assigned'}
+              </Text>
+            </View>
+            <ChevronDown size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showContactDropdown ? '180deg' : '0deg' }] }} />
+          </Pressable>
+
+          {showContactDropdown && (
+            <View style={styles.dropdownContainer}>
+              <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
+                <Pressable
+                  style={styles.dropdownItem}
+                  onPress={async () => {
+                    if (id) {
+                      await updateMeetingDetails(id, { primary_contact_id: null, client_name: null });
+                      setShowContactDropdown(false);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>None</Text>
+                  {!meeting.primary_contact_id && !meeting.client_name && (
+                    <Check size={16} color={Colors.accentLight} />
+                  )}
+                </Pressable>
+                {contacts.map((contact) => (
+                  <Pressable
+                    key={contact.id}
+                    style={styles.dropdownItem}
+                    onPress={async () => {
+                      if (id) {
+                        await updateMeetingDetails(id, { primary_contact_id: contact.id, client_name: contact.full_name });
+                        setShowContactDropdown(false);
+                        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                  >
+                    <View style={styles.dropdownItemInfo}>
+                      <Text style={styles.dropdownItemText}>{contact.full_name}</Text>
+                      {contact.company && (
+                        <Text style={styles.dropdownItemSubtext}>{contact.company}</Text>
+                      )}
+                    </View>
+                    {meeting.primary_contact_id === contact.id && (
+                      <Check size={16} color={Colors.accentLight} />
+                    )}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Meeting Type */}
+          <Pressable
+            style={styles.detailRow}
+            onPress={() => {
+              setShowMeetingTypeDropdown(!showMeetingTypeDropdown);
+              setShowContactDropdown(false);
+              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          >
+            <View style={styles.detailIconWrapper}>
+              <FileText size={18} color={Colors.accentLight} />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Meeting Type</Text>
+              <Text style={styles.detailValue}>{meeting.meeting_type}</Text>
+            </View>
+            <ChevronDown size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showMeetingTypeDropdown ? '180deg' : '0deg' }] }} />
+          </Pressable>
+
+          {showMeetingTypeDropdown && (
+            <View style={styles.dropdownContainer}>
+              <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
+                {MEETING_TYPES.map((type) => (
+                  <Pressable
+                    key={type}
+                    style={styles.dropdownItem}
+                    onPress={async () => {
+                      if (id) {
+                        await updateMeetingDetails(id, { meeting_type: type });
+                        setShowMeetingTypeDropdown(false);
+                        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                  >
+                    <Text style={styles.dropdownItemText}>{type}</Text>
+                    {meeting.meeting_type === type && (
+                      <Check size={16} color={Colors.accentLight} />
+                    )}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Billable Toggle */}
+          <View style={styles.detailRow}>
+            <View style={styles.detailIconWrapper}>
+              <DollarSign size={18} color={Colors.accentLight} />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Billable</Text>
+            </View>
+            <View style={styles.billableToggleContainer}>
+              <Text style={[styles.billableToggleLabel, !meeting.billable && styles.billableToggleLabelActive]}>No</Text>
+              <Switch
+                value={meeting.billable}
+                onValueChange={async (value) => {
+                  if (id) {
+                    await updateMeetingDetails(id, { billable: value });
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                }}
+                trackColor={{ false: Colors.border, true: Colors.success }}
+                thumbColor={Colors.background}
+              />
+              <Text style={[styles.billableToggleLabel, meeting.billable && styles.billableToggleLabelActive]}>Yes</Text>
+            </View>
+          </View>
+        </View>
         {/* Summary Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Summary</Text>
@@ -2833,5 +2993,82 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600" as const,
     color: Colors.accentLight,
+  },
+  detailRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  detailIconWrapper: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: `${Colors.accentLight}15`,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    marginRight: 12,
+  },
+  detailContent: {
+    flex: 1,
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginBottom: 2,
+  },
+  detailValue: {
+    fontSize: 15,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  billableToggleContainer: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+  },
+  billableToggleLabel: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    fontWeight: "500" as const,
+  },
+  billableToggleLabelActive: {
+    color: Colors.text,
+    fontWeight: "600" as const,
+  },
+  dropdownContainer: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 8,
+    marginTop: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxHeight: 200,
+  },
+  dropdownScroll: {
+    maxHeight: 200,
+  },
+  dropdownItem: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  dropdownItemInfo: {
+    flex: 1,
+  },
+  dropdownItemText: {
+    fontSize: 14,
+    color: Colors.text,
+    fontWeight: "500" as const,
+  },
+  dropdownItemSubtext: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginTop: 2,
   },
 });
