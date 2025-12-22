@@ -12,6 +12,7 @@ import {
   Modal,
   Share,
 } from "react-native";
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -318,11 +319,13 @@ const getReminderDate = (deadline: Date | null, option: ReminderOption): Date | 
 const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any) => {
   const [taskTitle, setTaskTitle] = useState("");
   const [selectedDeadline, setSelectedDeadline] = useState<DeadlineOption>('none');
+  const [customDeadline, setCustomDeadline] = useState<Date | null>(null);
   const [selectedReminder, setSelectedReminder] = useState<ReminderOption>('none');
   const [selectedPriority, setSelectedPriority] = useState<PriorityOption>('medium');
   const [showDeadlineOptions, setShowDeadlineOptions] = useState(false);
   const [showReminderOptions, setShowReminderOptions] = useState(false);
   const [showPriorityOptions, setShowPriorityOptions] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const shortMeetingName = useMemo(() => {
     if (!meetingTitle) return '';
@@ -330,7 +333,11 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
     return words.slice(0, 3).join(' ');
   }, [meetingTitle]);
 
-  const deadlineDate = useMemo(() => getDeadlineDate(selectedDeadline), [selectedDeadline]);
+  const deadlineDate = useMemo(() => {
+    if (selectedDeadline === 'custom') return customDeadline;
+    return getDeadlineDate(selectedDeadline);
+  }, [selectedDeadline, customDeadline]);
+  
   const reminderDate = useMemo(() => getReminderDate(deadlineDate, selectedReminder), [deadlineDate, selectedReminder]);
 
   const handleAdd = () => {
@@ -348,11 +355,13 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
   const resetForm = () => {
     setTaskTitle("");
     setSelectedDeadline('none');
+    setCustomDeadline(null);
     setSelectedReminder('none');
     setSelectedPriority('medium');
     setShowDeadlineOptions(false);
     setShowReminderOptions(false);
     setShowPriorityOptions(false);
+    setShowDatePicker(false);
   };
 
   const handleClose = () => {
@@ -361,8 +370,40 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
   };
 
   const getDeadlineLabel = () => {
+    if (selectedDeadline === 'custom' && customDeadline) {
+      return formatDeadlineDate(customDeadline);
+    }
     const option = DEADLINE_OPTIONS.find(o => o.key === selectedDeadline);
     return option?.label || 'No deadline';
+  };
+
+  const formatDeadlineDate = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+      return 'Tomorrow';
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  };
+
+  const formatReminderDateTime = (date: Date) => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const dateStr = date.toDateString() === today.toDateString() 
+      ? 'Today' 
+      : date.toDateString() === tomorrow.toDateString()
+      ? 'Tomorrow'
+      : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return `${dateStr} at ${timeStr}`;
   };
 
   const getReminderLabel = () => {
@@ -446,7 +487,10 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
                     ]}
                     onPress={() => {
                       setSelectedDeadline(option.key);
-                      if (option.key === 'none') setSelectedReminder('none');
+                      if (option.key === 'none') {
+                        setSelectedReminder('none');
+                        setCustomDeadline(null);
+                      }
                       if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
@@ -458,6 +502,52 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
                     </Text>
                   </Pressable>
                 ))}
+                <Pressable
+                  style={[
+                    styles.optionChip,
+                    selectedDeadline === 'custom' && styles.optionChipActive,
+                  ]}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      setShowDatePicker(true);
+                      setSelectedDeadline('custom');
+                      if (!customDeadline) {
+                        const tomorrow = new Date();
+                        tomorrow.setDate(tomorrow.getDate() + 1);
+                        tomorrow.setHours(17, 0, 0, 0);
+                        setCustomDeadline(tomorrow);
+                      }
+                    } else {
+                      const dateStr = prompt('Enter deadline date (MM/DD/YYYY):');
+                      if (dateStr) {
+                        const date = new Date(dateStr);
+                        if (!isNaN(date.getTime())) {
+                          date.setHours(23, 59, 59, 999);
+                          setCustomDeadline(date);
+                          setSelectedDeadline('custom');
+                        }
+                      }
+                    }
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Calendar size={14} color={selectedDeadline === 'custom' ? Colors.background : Colors.textSecondary} />
+                  <Text style={[
+                    styles.optionChipText,
+                    selectedDeadline === 'custom' && styles.optionChipTextActive,
+                  ]}>
+                    Custom date
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+            
+            {selectedDeadline !== 'none' && deadlineDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Calendar size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Due: {formatDeadlineDate(deadlineDate)}
+                </Text>
               </View>
             )}
 
@@ -513,6 +603,15 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
                 ))}
               </View>
             )}
+            
+            {selectedReminder !== 'none' && reminderDate && (
+              <View style={styles.selectedDateTimeContainer}>
+                <Bell size={14} color={Colors.accentLight} />
+                <Text style={styles.selectedDateTimeText}>
+                  Remind: {formatReminderDateTime(reminderDate)}
+                </Text>
+              </View>
+            )}
 
             {/* Priority Section */}
             <Pressable
@@ -565,6 +664,42 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
 
             <View style={{ height: 20 }} />
           </ScrollView>
+
+          {Platform.OS !== 'web' && showDatePicker && customDeadline && (
+            <Modal
+              transparent
+              animationType="fade"
+              visible={showDatePicker}
+              onRequestClose={() => setShowDatePicker(false)}
+            >
+              <View style={styles.datePickerOverlay}>
+                <Pressable 
+                  style={styles.datePickerBackdrop} 
+                  onPress={() => setShowDatePicker(false)}
+                />
+                <View style={styles.datePickerContainer}>
+                  <View style={styles.datePickerHeader}>
+                    <Text style={styles.datePickerTitle}>Select Deadline</Text>
+                    <Pressable onPress={() => setShowDatePicker(false)}>
+                      <Text style={styles.datePickerDoneButton}>Done</Text>
+                    </Pressable>
+                  </View>
+                  <DateTimePicker
+                    value={customDeadline}
+                    mode="date"
+                    display="spinner"
+                    onChange={(event: any, date?: Date) => {
+                      if (date) {
+                        date.setHours(23, 59, 59, 999);
+                        setCustomDeadline(date);
+                      }
+                    }}
+                    minimumDate={new Date()}
+                  />
+                </View>
+              </View>
+            </Modal>
+          )}
 
           <View style={styles.addTaskFooter}>
             <Pressable
@@ -2128,7 +2263,7 @@ const styles = StyleSheet.create({
     flexDirection: "row" as const,
     flexWrap: "wrap" as const,
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 8,
     paddingHorizontal: 4,
   },
   optionChip: {
@@ -2174,5 +2309,53 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600" as const,
     color: Colors.background,
+  },
+  selectedDateTimeContainer: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    backgroundColor: `${Colors.accentLight}15`,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  selectedDateTimeText: {
+    fontSize: 13,
+    color: Colors.accentLight,
+    fontWeight: "600" as const,
+  },
+  datePickerOverlay: {
+    flex: 1,
+    justifyContent: "flex-end" as const,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  },
+  datePickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  datePickerContainer: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+  },
+  datePickerHeader: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  datePickerTitle: {
+    fontSize: 18,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  datePickerDoneButton: {
+    fontSize: 16,
+    fontWeight: "600" as const,
+    color: Colors.accentLight,
   },
 });
