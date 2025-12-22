@@ -33,7 +33,8 @@ export default function RecordingScreen() {
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [hasPermission, setHasPermission] = useState(false);
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const [startedAt, setStartedAt] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -54,26 +55,48 @@ export default function RecordingScreen() {
     }
   }, [audioRecorder]);
 
-  useEffect(() => {
-    const setup = async () => {
-      try {
-        const { granted } = await requestRecordingPermissionsAsync();
-        console.log("[Recording] Permission granted:", granted);
-        setHasPermission(granted);
+  const requestPermission = useCallback(async () => {
+    try {
+      console.log("[Recording] Requesting microphone permission...");
+      const { granted, canAskAgain } = await requestRecordingPermissionsAsync();
+      console.log("[Recording] Permission granted:", granted, "canAskAgain:", canAskAgain);
+      
+      setHasPermission(granted);
+      setPermissionDenied(!granted);
 
-        if (granted) {
-          await setAudioModeAsync({
-            playsInSilentMode: true,
-            allowsRecording: true,
-          });
-        }
-      } catch (err) {
-        console.error("[Recording] Setup error:", err);
+      if (granted) {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          allowsRecording: true,
+        });
+      } else if (!canAskAgain && Platform.OS !== 'web') {
+        Alert.alert(
+          "Permission Required",
+          "Microphone permission is required to record meetings. Please enable it in your device settings.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => {
+              if (Platform.OS === 'ios') {
+                import('expo-linking').then(Linking => Linking.openSettings());
+              } else {
+                import('expo-linking').then(Linking => Linking.openSettings());
+              }
+            }}
+          ]
+        );
       }
-    };
-
-    setup();
+      
+      return granted;
+    } catch (err) {
+      console.error("[Recording] Permission request error:", err);
+      setPermissionDenied(true);
+      return false;
+    }
   }, []);
+
+  useEffect(() => {
+    requestPermission();
+  }, [requestPermission]);
 
   useEffect(() => {
     if (hasPermission && !recorderState.isRecording && !startedAt) {
@@ -248,15 +271,44 @@ export default function RecordingScreen() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  if (!hasPermission) {
+  if (hasPermission === null) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.permissionContainer}>
+          <View style={styles.permissionIconContainer}>
+            <Mic size={48} color={Colors.accent} />
+          </View>
+          <Text style={styles.permissionTitle}>Microphone Access</Text>
           <Text style={styles.permissionText}>
-            Microphone permission is required to record meetings.
+            Requesting microphone permission...
           </Text>
-          <Pressable style={styles.permissionButton} onPress={() => router.back()}>
-            <Text style={styles.permissionButtonText}>Go Back</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!hasPermission || permissionDenied) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.permissionContainer}>
+          <View style={styles.permissionIconContainer}>
+            <Mic size={48} color={Colors.accent} />
+          </View>
+          <Text style={styles.permissionTitle}>Microphone Access Required</Text>
+          <Text style={styles.permissionText}>
+            To record meetings, please grant microphone permission.
+          </Text>
+          <Pressable 
+            style={styles.permissionButton} 
+            onPress={requestPermission}
+          >
+            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+          </Pressable>
+          <Pressable 
+            style={styles.secondaryButton} 
+            onPress={() => router.back()}
+          >
+            <Text style={styles.secondaryButtonText}>Go Back</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -334,22 +386,49 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 32,
   },
+  permissionIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  permissionTitle: {
+    fontSize: 22,
+    fontWeight: "700" as const,
+    color: Colors.text,
+    textAlign: "center",
+    marginBottom: 12,
+  },
   permissionText: {
-    fontSize: 18,
+    fontSize: 16,
     color: Colors.textSecondary,
     textAlign: "center",
-    marginBottom: 24,
+    marginBottom: 32,
+    lineHeight: 24,
+    paddingHorizontal: 16,
   },
   permissionButton: {
     backgroundColor: Colors.accent,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
+    paddingVertical: 16,
+    paddingHorizontal: 40,
     borderRadius: 12,
+    marginBottom: 16,
   },
   permissionButtonText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "600" as const,
     color: Colors.text,
+  },
+  secondaryButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+  },
+  secondaryButtonText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
   },
   recordingIndicator: {
     marginBottom: 40,
