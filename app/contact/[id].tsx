@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ArrowLeft, Trash2, Mail, Phone, Building, Calendar } from "lucide-react-native";
+import { ArrowLeft, Trash2, Mail, Phone, Building, Calendar, Clock, DollarSign, FileText, TrendingUp } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useContacts } from "@/contexts/ContactContext";
 import { useMeetings } from "@/contexts/MeetingContext";
@@ -33,6 +33,47 @@ export default function ContactDetailScreen() {
       setLinkedMeetings(linked);
     }
   }, [contact, meetings]);
+
+  const stats = useMemo(() => {
+    const totalMeetings = linkedMeetings.length;
+    const totalSeconds = linkedMeetings.reduce((sum, m) => sum + m.duration_seconds, 0);
+    const totalBillableSeconds = linkedMeetings.reduce((sum, m) => 
+      m.billable ? sum + m.billable_seconds : sum, 0
+    );
+    const totalBilled = linkedMeetings.reduce((sum, m) => {
+      if (!m.billable) return sum;
+      const hours = m.billable_seconds / 3600;
+      return sum + (hours * m.hourly_rate_snapshot);
+    }, 0);
+
+    const meetingsByType = linkedMeetings.reduce((acc, m) => {
+      acc[m.meeting_type] = (acc[m.meeting_type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const completedMeetings = linkedMeetings.filter(m => m.status === 'ready').length;
+
+    return {
+      totalMeetings,
+      totalSeconds,
+      totalBillableSeconds,
+      totalBilled,
+      meetingsByType,
+      completedMeetings,
+    };
+  }, [linkedMeetings]);
+
+  const formatDuration = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  };
+
+  const formatCurrency = (amount: number): string => {
+    return `${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  };
 
   const handleBack = () => {
     if (Platform.OS !== "web") {
@@ -152,9 +193,77 @@ export default function ContactDetailScreen() {
           </View>
         )}
 
+        {linkedMeetings.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Activity Summary</Text>
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <View style={styles.statIconContainer}>
+                  <FileText size={20} color={Colors.accentLight} />
+                </View>
+                <Text style={styles.statValue}>{stats.totalMeetings}</Text>
+                <Text style={styles.statLabel}>Total Meetings</Text>
+                <Text style={styles.statSubLabel}>{stats.completedMeetings} completed</Text>
+              </View>
+              
+              <View style={styles.statCard}>
+                <View style={styles.statIconContainer}>
+                  <Clock size={20} color={Colors.accentLight} />
+                </View>
+                <Text style={styles.statValue}>{formatDuration(stats.totalSeconds)}</Text>
+                <Text style={styles.statLabel}>Total Time</Text>
+                <Text style={styles.statSubLabel}>{formatDuration(stats.totalBillableSeconds)} billable</Text>
+              </View>
+              
+              <View style={styles.statCard}>
+                <View style={styles.statIconContainer}>
+                  <DollarSign size={20} color={Colors.success} />
+                </View>
+                <Text style={styles.statValue}>{formatCurrency(stats.totalBilled)}</Text>
+                <Text style={styles.statLabel}>Total Billed</Text>
+                <Text style={styles.statSubLabel}>
+                  {linkedMeetings.filter(m => m.billable).length} billable meetings
+                </Text>
+              </View>
+              
+              <View style={styles.statCard}>
+                <View style={styles.statIconContainer}>
+                  <TrendingUp size={20} color={Colors.accentLight} />
+                </View>
+                <Text style={styles.statValue}>
+                  {stats.totalBillableSeconds > 0 
+                    ? formatCurrency((stats.totalBilled / (stats.totalBillableSeconds / 3600)))
+                    : '$0'}
+                </Text>
+                <Text style={styles.statLabel}>Avg Rate</Text>
+                <Text style={styles.statSubLabel}>per hour</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {Object.keys(stats.meetingsByType).length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Meeting Types</Text>
+            <View style={styles.typesList}>
+              {Object.entries(stats.meetingsByType)
+                .sort((a, b) => b[1] - a[1])
+                .map(([type, count]) => (
+                  <View key={type} style={styles.typeRow}>
+                    <View style={styles.typeDot} />
+                    <Text style={styles.typeText} numberOfLines={1}>{type}</Text>
+                    <View style={styles.typeCountBadge}>
+                      <Text style={styles.typeCount}>{count}</Text>
+                    </View>
+                  </View>
+                ))}
+            </View>
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
-            Linked Meetings ({linkedMeetings.length})
+            Meeting History ({linkedMeetings.length})
           </Text>
           {linkedMeetings.length === 0 ? (
             <View style={styles.emptyMeetings}>
@@ -167,19 +276,75 @@ export default function ContactDetailScreen() {
               {linkedMeetings.map((meeting) => {
                 const title = meeting.title_override || meeting.auto_title;
                 const date = new Date(meeting.created_at);
+                const billedAmount = meeting.billable 
+                  ? (meeting.billable_seconds / 3600) * meeting.hourly_rate_snapshot
+                  : 0;
+                
                 return (
                   <Pressable
                     key={meeting.id}
                     style={styles.meetingCard}
                     onPress={() => handleMeetingPress(meeting)}
                   >
-                    <Text style={styles.meetingTitle} numberOfLines={1}>
-                      {title}
-                    </Text>
-                    <View style={styles.meetingMeta}>
-                      <Calendar size={12} color={Colors.textMuted} />
-                      <Text style={styles.meetingDate}>
-                        {date.toLocaleDateString()}
+                    <View style={styles.meetingCardHeader}>
+                      <Text style={styles.meetingTitle} numberOfLines={1}>
+                        {title}
+                      </Text>
+                      {meeting.billable && (
+                        <View style={styles.billableBadge}>
+                          <DollarSign size={12} color={Colors.success} />
+                        </View>
+                      )}
+                    </View>
+                    
+                    <View style={styles.meetingType}>
+                      <View style={styles.meetingTypeDot} />
+                      <Text style={styles.meetingTypeText} numberOfLines={1}>
+                        {meeting.meeting_type}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.meetingDetailsRow}>
+                      <View style={styles.meetingDetail}>
+                        <Calendar size={12} color={Colors.textMuted} />
+                        <Text style={styles.meetingDetailText}>
+                          {date.toLocaleDateString()}
+                        </Text>
+                      </View>
+                      
+                      {meeting.duration_seconds > 0 && (
+                        <View style={styles.meetingDetail}>
+                          <Clock size={12} color={Colors.textMuted} />
+                          <Text style={styles.meetingDetailText}>
+                            {formatDuration(meeting.duration_seconds)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    
+                    {meeting.billable && billedAmount > 0 && (
+                      <View style={styles.billedAmountContainer}>
+                        <Text style={styles.billedAmount}>
+                          {formatCurrency(billedAmount)}
+                        </Text>
+                        <Text style={styles.billedRate}>
+                          @ ${meeting.hourly_rate_snapshot}/hr
+                        </Text>
+                      </View>
+                    )}
+                    
+                    <View style={styles.meetingStatusContainer}>
+                      <View style={[
+                        styles.statusDot,
+                        meeting.status === 'ready' && styles.statusDotReady,
+                        meeting.status === 'processing' && styles.statusDotProcessing,
+                        meeting.status === 'failed' && styles.statusDotFailed,
+                      ]} />
+                      <Text style={styles.statusText}>
+                        {meeting.status === 'ready' ? 'Completed' : 
+                         meeting.status === 'processing' ? 'Processing' :
+                         meeting.status === 'recording' ? 'Recording' :
+                         meeting.status === 'uploading' ? 'Uploading' : 'Failed'}
                       </Text>
                     </View>
                   </Pressable>
@@ -348,5 +513,171 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: Colors.textMuted,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: '46%',
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  statIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: `${Colors.accentLight}15`,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: '700' as const,
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  statSubLabel: {
+    fontSize: 11,
+    color: Colors.textMuted,
+  },
+  typesList: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  typeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.accentLight,
+  },
+  typeText: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    fontWeight: '500' as const,
+  },
+  typeCountBadge: {
+    backgroundColor: `${Colors.accentLight}20`,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  typeCount: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: Colors.accentLight,
+  },
+  meetingCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  billableBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: `${Colors.success}20`,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  meetingType: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  meetingTypeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.textMuted,
+  },
+  meetingTypeText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  meetingDetailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  meetingDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  meetingDetailText: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  billedAmountContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: `${Colors.success}08`,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  billedAmount: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+    color: Colors.success,
+  },
+  billedRate: {
+    fontSize: 12,
+    color: Colors.textMuted,
+  },
+  meetingStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.textMuted,
+  },
+  statusDotReady: {
+    backgroundColor: Colors.success,
+  },
+  statusDotProcessing: {
+    backgroundColor: Colors.accentLight,
+  },
+  statusDotFailed: {
+    backgroundColor: Colors.error,
+  },
+  statusText: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    fontWeight: '500' as const,
   },
 });
