@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -19,93 +20,44 @@ import {
   DollarSign,
   Play,
   Pause,
-  ChevronDown,
-  ChevronUp,
   Edit3,
   Trash2,
   Download,
   AlertTriangle,
+  Search,
+  X,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
-import type { Certainty } from "@/types";
 
 type TabKey = "summary" | "transcript" | "actions" | "billing";
 
-interface SummaryItem {
-  text: string;
-  support: { start_ms: number; end_ms: number }[];
-  certainty: Certainty;
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const CertaintyBadge = ({ certainty }: { certainty: Certainty }) => (
-  <View
-    style={[
-      styles.certaintyBadge,
-      {
-        backgroundColor:
-          certainty === "explicit"
-            ? `${Colors.certaintyExplicit}20`
-            : `${Colors.certaintyUnclear}20`,
-      },
-    ]}
-  >
-    <Text
-      style={[
-        styles.certaintyText,
-        {
-          color:
-            certainty === "explicit"
-              ? Colors.certaintyExplicit
-              : Colors.certaintyUnclear,
-        },
-      ]}
-    >
-      {certainty}
-    </Text>
-  </View>
-);
+const HighlightedText = ({ text, searchQuery }: { text: string; searchQuery: string }) => {
+  if (!searchQuery.trim()) {
+    return <Text style={styles.segmentText}>{text}</Text>;
+  }
 
-const SummarySection = ({
-  title,
-  items,
-  isExpanded,
-  onToggle,
-}: {
-  title: string;
-  items: SummaryItem[];
-  isExpanded: boolean;
-  onToggle: () => void;
-}) => (
-  <View style={styles.summarySection}>
-    <Pressable style={styles.sectionHeader} onPress={onToggle}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionHeaderRight}>
-        <Text style={styles.sectionCount}>{items.length}</Text>
-        {isExpanded ? (
-          <ChevronUp size={20} color={Colors.textMuted} />
+  const parts = text.split(new RegExp(`(${escapeRegex(searchQuery)})`, "gi"));
+
+  return (
+    <Text style={styles.segmentText}>
+      {parts.map((part, index) =>
+        part.toLowerCase() === searchQuery.toLowerCase() ? (
+          <Text key={index} style={styles.highlightedText}>
+            {part}
+          </Text>
         ) : (
-          <ChevronDown size={20} color={Colors.textMuted} />
-        )}
-      </View>
-    </Pressable>
-    {isExpanded && (
-      <View style={styles.sectionContent}>
-        {items.length === 0 ? (
-          <Text style={styles.emptyText}>No items found</Text>
-        ) : (
-          items.map((item, index) => (
-            <View key={index} style={styles.summaryItem}>
-              <Text style={styles.summaryItemText}>{item.text}</Text>
-              <CertaintyBadge certainty={item.certainty} />
-            </View>
-          ))
-        )}
-      </View>
-    )}
-  </View>
-);
+          <Text key={index}>{part}</Text>
+        )
+      )}
+    </Text>
+  );
+};
 
 export default function MeetingDetailScreen() {
   const router = useRouter();
@@ -114,24 +66,38 @@ export default function MeetingDetailScreen() {
   const { deleteMeeting } = useMeetings();
 
   const [activeTab, setActiveTab] = useState<TabKey>("summary");
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    overview: true,
-    key_facts: false,
-    legal_issues: false,
-    decisions: false,
-    risks: false,
-    follow_up: false,
-    open_questions: false,
-  });
   const [showMenu, setShowMenu] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
 
-  const toggleSection = (key: string) => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const title = meeting?.title_override || meeting?.auto_title || "Meeting";
+  const aiOutput = meeting?.ai_output;
+
+  const filteredTranscript = useMemo(() => {
+    if (!meeting?.transcript_segments || !searchQuery.trim()) {
+      return meeting?.transcript_segments || [];
     }
-    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+    const query = searchQuery.toLowerCase();
+    return meeting.transcript_segments.filter(
+      (segment) =>
+        segment.text.toLowerCase().includes(query) ||
+        (segment.speaker_name || segment.speaker_label).toLowerCase().includes(query)
+    );
+  }, [meeting?.transcript_segments, searchQuery]);
+
+  const matchCount = useMemo(() => {
+    if (!searchQuery.trim()) return 0;
+    const query = searchQuery.toLowerCase();
+    if (activeTab === "transcript") {
+      return filteredTranscript.length;
+    }
+    if (activeTab === "summary" && aiOutput) {
+      const summaryText = aiOutput.meeting_overview.one_sentence_summary.toLowerCase();
+      return summaryText.includes(query) ? 1 : 0;
+    }
+    return 0;
+  }, [searchQuery, activeTab, filteredTranscript, aiOutput]);
 
   const handleDelete = async () => {
     if (!id) return;
@@ -179,9 +145,6 @@ export default function MeetingDetailScreen() {
     { key: "billing", label: "Billing", icon: DollarSign },
   ];
 
-  const title = meeting?.title_override || meeting?.auto_title || "Meeting";
-  const aiOutput = meeting?.ai_output;
-
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -207,7 +170,7 @@ export default function MeetingDetailScreen() {
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen options={{ headerShown: false }} />
-      
+
       <View style={styles.header}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={24} color={Colors.text} />
@@ -246,25 +209,67 @@ export default function MeetingDetailScreen() {
         </View>
       )}
 
-      <View style={styles.tabs}>
-        {tabs.map((tab) => (
-          <Pressable
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-            onPress={() => setActiveTab(tab.key)}
-          >
-            <Text
-              style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}
+      <View style={styles.tabsContainer}>
+        <View style={styles.tabs}>
+          {tabs.map((tab) => (
+            <Pressable
+              key={tab.key}
+              style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+              onPress={() => {
+                setActiveTab(tab.key);
+                setSearchQuery("");
+              }}
             >
-              {tab.label}
-            </Text>
+              <Text
+                style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}
+              >
+                {tab.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {(activeTab === "summary" || activeTab === "transcript") && (
+          <Pressable
+            style={[styles.searchButton, showSearch && styles.searchButtonActive]}
+            onPress={() => {
+              setShowSearch(!showSearch);
+              if (showSearch) setSearchQuery("");
+            }}
+          >
+            <Search size={18} color={showSearch ? Colors.accentLight : Colors.textMuted} />
           </Pressable>
-        ))}
+        )}
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {activeTab === "summary" && (
           <View style={styles.tabContent}>
+            {showSearch && (
+              <View style={styles.searchContainer}>
+                <View style={styles.searchInputWrapper}>
+                  <Search size={18} color={Colors.textMuted} />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search summary..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoFocus
+                  />
+                  {searchQuery.length > 0 && (
+                    <Pressable onPress={() => setSearchQuery("")}>
+                      <X size={18} color={Colors.textMuted} />
+                    </Pressable>
+                  )}
+                </View>
+                {searchQuery.length > 0 && (
+                  <Text style={styles.searchResultCount}>
+                    {matchCount} {matchCount === 1 ? "match" : "matches"} found
+                  </Text>
+                )}
+              </View>
+            )}
+
             <View style={styles.disclaimer}>
               <AlertTriangle size={14} color={Colors.warning} />
               <Text style={styles.disclaimerText}>
@@ -273,77 +278,21 @@ export default function MeetingDetailScreen() {
             </View>
 
             {aiOutput ? (
-              <>
-                <View style={styles.overviewCard}>
-                  <Text style={styles.overviewText}>
-                    {aiOutput.meeting_overview.one_sentence_summary}
-                  </Text>
-                  {aiOutput.meeting_overview.topics.length > 0 && (
-                    <View style={styles.topicsRow}>
-                      {aiOutput.meeting_overview.topics.map((topic, i) => (
-                        <View key={i} style={styles.topicTag}>
-                          <Text style={styles.topicText}>{topic}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-
-                <SummarySection
-                  title="Key Facts"
-                  items={aiOutput.key_facts_stated.map((f) => ({
-                    text: f.fact,
-                    support: f.support,
-                    certainty: f.certainty,
-                  })) as { text: string; support: { start_ms: number; end_ms: number }[]; certainty: Certainty }[]}
-                  isExpanded={expandedSections.key_facts}
-                  onToggle={() => toggleSection("key_facts")}
+              <View style={styles.summaryCard}>
+                {aiOutput.meeting_overview.topics.length > 0 && (
+                  <View style={styles.topicsRow}>
+                    {aiOutput.meeting_overview.topics.map((topic, i) => (
+                      <View key={i} style={styles.topicTag}>
+                        <Text style={styles.topicText}>{topic}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                <HighlightedText
+                  text={aiOutput.meeting_overview.one_sentence_summary}
+                  searchQuery={searchQuery}
                 />
-
-                <SummarySection
-                  title="Legal Issues"
-                  items={aiOutput.legal_issues_discussed.map((item) => ({
-                    text: item.issue,
-                    support: item.support,
-                    certainty: item.certainty,
-                  })) as { text: string; support: { start_ms: number; end_ms: number }[]; certainty: Certainty }[]}
-                  isExpanded={expandedSections.legal_issues}
-                  onToggle={() => toggleSection("legal_issues")}
-                />
-
-                <SummarySection
-                  title="Decisions Made"
-                  items={aiOutput.decisions_made.map((d) => ({
-                    text: d.decision,
-                    support: d.support,
-                    certainty: d.certainty,
-                  })) as { text: string; support: { start_ms: number; end_ms: number }[]; certainty: Certainty }[]}
-                  isExpanded={expandedSections.decisions}
-                  onToggle={() => toggleSection("decisions")}
-                />
-
-                <SummarySection
-                  title="Risks & Concerns"
-                  items={aiOutput.risks_or_concerns_raised.map((r) => ({
-                    text: r.risk,
-                    support: r.support,
-                    certainty: r.certainty,
-                  })) as { text: string; support: { start_ms: number; end_ms: number }[]; certainty: Certainty }[]}
-                  isExpanded={expandedSections.risks}
-                  onToggle={() => toggleSection("risks")}
-                />
-
-                <SummarySection
-                  title="Open Questions"
-                  items={aiOutput.open_questions.map((q) => ({
-                    text: q.question,
-                    support: q.support,
-                    certainty: q.certainty,
-                  })) as { text: string; support: { start_ms: number; end_ms: number }[]; certainty: Certainty }[]}
-                  isExpanded={expandedSections.open_questions}
-                  onToggle={() => toggleSection("open_questions")}
-                />
-              </>
+              </View>
             ) : (
               <View style={styles.noData}>
                 <Text style={styles.noDataText}>
@@ -358,8 +307,34 @@ export default function MeetingDetailScreen() {
 
         {activeTab === "transcript" && (
           <View style={styles.tabContent}>
-            {meeting.transcript_segments && meeting.transcript_segments.length > 0 ? (
-              meeting.transcript_segments.map((segment, index) => (
+            {showSearch && (
+              <View style={styles.searchContainer}>
+                <View style={styles.searchInputWrapper}>
+                  <Search size={18} color={Colors.textMuted} />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search transcript..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoFocus
+                  />
+                  {searchQuery.length > 0 && (
+                    <Pressable onPress={() => setSearchQuery("")}>
+                      <X size={18} color={Colors.textMuted} />
+                    </Pressable>
+                  )}
+                </View>
+                {searchQuery.length > 0 && (
+                  <Text style={styles.searchResultCount}>
+                    {matchCount} {matchCount === 1 ? "match" : "matches"} found
+                  </Text>
+                )}
+              </View>
+            )}
+
+            {filteredTranscript.length > 0 ? (
+              filteredTranscript.map((segment, index) => (
                 <View key={segment.id || index} style={styles.transcriptSegment}>
                   <View style={styles.segmentHeader}>
                     <Text style={styles.speakerLabel}>
@@ -370,9 +345,15 @@ export default function MeetingDetailScreen() {
                       {((segment.start_ms % 60000) / 1000).toFixed(0).padStart(2, "0")}
                     </Text>
                   </View>
-                  <Text style={styles.segmentText}>{segment.text}</Text>
+                  <HighlightedText text={segment.text} searchQuery={searchQuery} />
                 </View>
               ))
+            ) : searchQuery.trim() &&
+              meeting.transcript_segments &&
+              meeting.transcript_segments.length > 0 ? (
+              <View style={styles.noData}>
+                <Text style={styles.noDataText}>No matches found</Text>
+              </View>
             ) : (
               <View style={styles.noData}>
                 <Text style={styles.noDataText}>
@@ -563,12 +544,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.text,
   },
-  tabs: {
+  tabsContainer: {
     flexDirection: "row",
-    paddingHorizontal: 16,
+    alignItems: "center",
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    paddingRight: 12,
+  },
+  tabs: {
+    flex: 1,
+    flexDirection: "row",
+    paddingHorizontal: 16,
+  },
+  searchButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  searchButtonActive: {
+    backgroundColor: `${Colors.accentLight}20`,
   },
   tab: {
     flex: 1,
@@ -610,23 +608,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.warning,
   },
-  overviewCard: {
+  searchContainer: {
+    marginBottom: 16,
+  },
+  searchInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.text,
+    padding: 0,
+  },
+  searchResultCount: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginTop: 8,
+    marginLeft: 4,
+  },
+  highlightedText: {
+    backgroundColor: `${Colors.accentLight}40`,
+    color: Colors.text,
+    fontWeight: "600" as const,
+  },
+  summaryCard: {
     backgroundColor: Colors.surface,
     borderRadius: 12,
     padding: 16,
-    marginBottom: 16,
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  overviewText: {
-    fontSize: 16,
-    color: Colors.text,
-    lineHeight: 24,
   },
   topicsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginTop: 12,
+    marginBottom: 14,
     gap: 8,
   },
   topicTag: {
@@ -638,69 +661,6 @@ const styles = StyleSheet.create({
   topicText: {
     fontSize: 12,
     color: Colors.textSecondary,
-  },
-  summarySection: {
-    marginBottom: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: "hidden",
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "600" as const,
-    color: Colors.text,
-  },
-  sectionHeaderRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  sectionCount: {
-    fontSize: 13,
-    color: Colors.textMuted,
-    backgroundColor: Colors.surfaceLight,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  sectionContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
-  },
-  summaryItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-  },
-  summaryItemText: {
-    flex: 1,
-    fontSize: 14,
-    color: Colors.textSecondary,
-    lineHeight: 20,
-  },
-  certaintyBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  certaintyText: {
-    fontSize: 10,
-    fontWeight: "600" as const,
-    textTransform: "uppercase",
-  },
-  emptyText: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    fontStyle: "italic",
   },
   noData: {
     alignItems: "center",
