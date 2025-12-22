@@ -1350,6 +1350,10 @@ export default function MeetingDetailScreen() {
   const [showTimeEditor, setShowTimeEditor] = useState(false);
   const [editingTimeHours, setEditingTimeHours] = useState('');
   const [editingTimeMinutes, setEditingTimeMinutes] = useState('');
+  const [showBillableEditor, setShowBillableEditor] = useState(false);
+  const [editingBillableHours, setEditingBillableHours] = useState('');
+  const [editingBillableMinutes, setEditingBillableMinutes] = useState('');
+  const [editingHourlyRate, setEditingHourlyRate] = useState('');
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -2202,7 +2206,106 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
                   {meeting.hourly_rate_snapshot}/hr
                 </Text>
               </View>
+              <Pressable
+                style={styles.actionEditButtonNew}
+                onPress={() => {
+                  const hours = Math.floor(meeting.billable_seconds / 3600);
+                  const minutes = Math.floor((meeting.billable_seconds % 3600) / 60);
+                  setEditingBillableHours(hours.toString());
+                  setEditingBillableMinutes(minutes.toString());
+                  setEditingHourlyRate(meeting.hourly_rate_snapshot.toString());
+                  setShowBillableEditor(true);
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                }}
+              >
+                <Text style={styles.actionEditButtonText}>Edit</Text>
+              </Pressable>
             </View>
+
+            {showBillableEditor && (
+              <View style={styles.billableEditorContainer}>
+                <Text style={styles.billableEditorLabel}>Edit Billable Amount</Text>
+                
+                <Text style={styles.billableEditorSectionLabel}>Billable Time</Text>
+                <View style={styles.timeEditorInputRow}>
+                  <View style={styles.timeEditorInputGroup}>
+                    <TextInput
+                      style={styles.timeEditorInput}
+                      value={editingBillableHours}
+                      onChangeText={setEditingBillableHours}
+                      keyboardType="number-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.textMuted}
+                      maxLength={3}
+                    />
+                    <Text style={styles.timeEditorUnit}>hours</Text>
+                  </View>
+                  <View style={styles.timeEditorInputGroup}>
+                    <TextInput
+                      style={styles.timeEditorInput}
+                      value={editingBillableMinutes}
+                      onChangeText={setEditingBillableMinutes}
+                      keyboardType="number-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.textMuted}
+                      maxLength={2}
+                    />
+                    <Text style={styles.timeEditorUnit}>min</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.billableEditorSectionLabel}>Hourly Rate</Text>
+                <View style={styles.hourlyRateInputContainer}>
+                  <Text style={styles.hourlyRateDollarSign}>$</Text>
+                  <TextInput
+                    style={styles.hourlyRateInput}
+                    value={editingHourlyRate}
+                    onChangeText={setEditingHourlyRate}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.textMuted}
+                    maxLength={5}
+                  />
+                  <Text style={styles.hourlyRateUnit}>/hr</Text>
+                </View>
+
+                <View style={styles.timeEditorActions}>
+                  <Pressable
+                    style={styles.timeEditorCancelButton}
+                    onPress={() => {
+                      setShowBillableEditor(false);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Text style={styles.timeEditorCancelText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.timeEditorSaveButton}
+                    onPress={async () => {
+                      const hours = parseInt(editingBillableHours) || 0;
+                      const minutes = parseInt(editingBillableMinutes) || 0;
+                      const newBillableSeconds = hours * 3600 + minutes * 60;
+                      const newRate = parseInt(editingHourlyRate) || 0;
+                      
+                      if (newBillableSeconds >= 0 && newRate > 0 && id) {
+                        await updateMeetingDetails(id, { 
+                          billable_seconds: newBillableSeconds,
+                          hourly_rate_snapshot: newRate
+                        });
+                        setShowBillableEditor(false);
+                        if (Platform.OS !== 'web') {
+                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={styles.timeEditorSaveText}>Save</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -3274,5 +3377,56 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600' as const,
     color: Colors.error,
+  },
+  billableEditorContainer: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  billableEditorLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 16,
+  },
+  billableEditorSectionLabel: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textMuted,
+    marginBottom: 8,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  hourlyRateInputContainer: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  hourlyRateDollarSign: {
+    fontSize: 18,
+    fontWeight: '600' as const,
+    color: Colors.success,
+    marginRight: 4,
+  },
+  hourlyRateInput: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    padding: 0,
+  },
+  hourlyRateUnit: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    marginLeft: 4,
   },
 });
