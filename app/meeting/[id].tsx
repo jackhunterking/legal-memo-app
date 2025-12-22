@@ -9,7 +9,6 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
-
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
@@ -17,24 +16,22 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ChevronLeft,
   MoreVertical,
-  FileText,
-  ListChecks,
-  DollarSign,
   Play,
   Pause,
   Edit3,
   Trash2,
-  Download,
   AlertTriangle,
   Search,
   X,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  DollarSign,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
-
-type TabKey = "summary" | "transcript" | "actions" | "billing";
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -68,11 +65,12 @@ export default function MeetingDetailScreen() {
   const { data: meeting, isLoading } = useMeetingDetails(id || null);
   const { deleteMeeting } = useMeetings();
 
-  const [activeTab, setActiveTab] = useState<TabKey>("summary");
   const [showMenu, setShowMenu] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+  const [expandedSummary, setExpandedSummary] = useState(true);
+  const [expandedTranscript, setExpandedTranscript] = useState(false);
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -214,16 +212,8 @@ export default function MeetingDetailScreen() {
 
   const matchCount = useMemo(() => {
     if (!searchQuery.trim()) return 0;
-    const query = searchQuery.toLowerCase();
-    if (activeTab === "transcript") {
-      return filteredTranscript.length;
-    }
-    if (activeTab === "summary" && aiOutput) {
-      const summaryText = aiOutput.meeting_overview.one_sentence_summary.toLowerCase();
-      return summaryText.includes(query) ? 1 : 0;
-    }
-    return 0;
-  }, [searchQuery, activeTab, filteredTranscript, aiOutput]);
+    return filteredTranscript.length;
+  }, [searchQuery, filteredTranscript]);
 
   const handleDelete = async () => {
     if (!id) return;
@@ -264,13 +254,6 @@ export default function MeetingDetailScreen() {
     updatedActions[actionIndex] = { ...updatedActions[actionIndex], completed };
   };
 
-  const tabs: { key: TabKey; label: string; icon: typeof FileText }[] = [
-    { key: "summary", label: "Summary", icon: FileText },
-    { key: "transcript", label: "Transcript", icon: FileText },
-    { key: "actions", label: "Actions", icon: ListChecks },
-    { key: "billing", label: "Billing", icon: DollarSign },
-  ];
-
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -305,104 +288,100 @@ export default function MeetingDetailScreen() {
           <Text style={styles.headerTitle} numberOfLines={1}>
             {title}
           </Text>
-          <Text style={styles.headerSubtitle}>
-            {new Date(meeting.created_at).toLocaleDateString()}
-          </Text>
+          <View style={styles.headerMeta}>
+            <Text style={styles.headerSubtitle}>
+              {new Date(meeting.created_at).toLocaleDateString()}
+            </Text>
+            <View style={styles.dot} />
+            <Clock size={12} color={Colors.textMuted} />
+            <Text style={styles.headerSubtitle}>
+              {formatDuration(meeting.duration_seconds)}
+            </Text>
+          </View>
         </View>
         <View style={styles.headerActions}>
           <Pressable
             style={styles.iconButton}
-            onPress={() => router.push(`/edit-meeting?id=${id}` as any)}
+            onPress={() => {
+              setShowSearch(!showSearch);
+              if (showSearch) setSearchQuery("");
+            }}
           >
-            <Edit3 size={20} color={Colors.text} />
+            <Search size={18} color={showSearch ? Colors.accentLight : Colors.text} />
           </Pressable>
           <Pressable style={styles.iconButton} onPress={() => setShowMenu(!showMenu)}>
-            <MoreVertical size={20} color={Colors.text} />
+            <MoreVertical size={18} color={Colors.text} />
           </Pressable>
         </View>
       </View>
 
       {showMenu && (
         <View style={styles.menuDropdown}>
+          <Pressable
+            style={styles.menuItem}
+            onPress={() => {
+              setShowMenu(false);
+              router.push(`/edit-meeting?id=${id}` as any);
+            }}
+          >
+            <Edit3 size={18} color={Colors.text} />
+            <Text style={styles.menuItemText}>Edit Meeting</Text>
+          </Pressable>
           <Pressable style={styles.menuItem} onPress={handleDelete}>
             <Trash2 size={18} color={Colors.error} />
             <Text style={[styles.menuItemText, { color: Colors.error }]}>Delete</Text>
           </Pressable>
-          <Pressable style={styles.menuItem}>
-            <Download size={18} color={Colors.text} />
-            <Text style={styles.menuItemText}>Export</Text>
-          </Pressable>
         </View>
       )}
 
-      <View style={styles.tabsContainer}>
-        <View style={styles.tabs}>
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.key}
-              style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-              onPress={() => {
-                setActiveTab(tab.key);
-                setSearchQuery("");
-              }}
-            >
-              <Text
-                style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}
-              >
-                {tab.label}
-              </Text>
-            </Pressable>
-          ))}
+      {showSearch && (
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputWrapper}>
+            <Search size={18} color={Colors.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search in transcript..."
+              placeholderTextColor={Colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+            {searchQuery.length > 0 && (
+              <Pressable onPress={() => setSearchQuery("")}>
+                <X size={18} color={Colors.textMuted} />
+              </Pressable>
+            )}
+          </View>
+          {searchQuery.length > 0 && (
+            <Text style={styles.searchResultCount}>
+              {matchCount} {matchCount === 1 ? "result" : "results"}
+            </Text>
+          )}
         </View>
-        {(activeTab === "summary" || activeTab === "transcript") && (
-          <Pressable
-            style={[styles.searchButton, showSearch && styles.searchButtonActive]}
-            onPress={() => {
-              setShowSearch(!showSearch);
-              if (showSearch) setSearchQuery("");
-            }}
-          >
-            <Search size={18} color={showSearch ? Colors.accentLight : Colors.textMuted} />
-          </Pressable>
-        )}
-      </View>
+      )}
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {activeTab === "summary" && (
-          <View style={styles.tabContent}>
-            {showSearch && (
-              <View style={styles.searchContainer}>
-                <View style={styles.searchInputWrapper}>
-                  <Search size={18} color={Colors.textMuted} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search summary..."
-                    placeholderTextColor={Colors.textMuted}
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    autoFocus
-                  />
-                  {searchQuery.length > 0 && (
-                    <Pressable onPress={() => setSearchQuery("")}>
-                      <X size={18} color={Colors.textMuted} />
-                    </Pressable>
-                  )}
-                </View>
-                {searchQuery.length > 0 && (
-                  <Text style={styles.searchResultCount}>
-                    {matchCount} {matchCount === 1 ? "match" : "matches"} found
-                  </Text>
-                )}
-              </View>
-            )}
+        <View style={styles.disclaimer}>
+          <AlertTriangle size={12} color={Colors.warning} />
+          <Text style={styles.disclaimerText}>
+            AI-generated content. Not legal advice.
+          </Text>
+        </View>
 
-            <View style={styles.disclaimer}>
-              <AlertTriangle size={14} color={Colors.warning} />
-              <Text style={styles.disclaimerText}>
-                AI-generated summary. Not legal advice.
-              </Text>
-            </View>
+        <Pressable
+          style={styles.sectionHeader}
+          onPress={() => setExpandedSummary(!expandedSummary)}
+        >
+          <Text style={styles.sectionTitle}>Summary</Text>
+          {expandedSummary ? (
+            <ChevronUp size={20} color={Colors.text} />
+          ) : (
+            <ChevronDown size={20} color={Colors.text} />
+          )}
+        </Pressable>
 
+        {expandedSummary && (
+          <View style={styles.sectionContent}>
             {aiOutput ? (
               <View style={styles.summaryCard}>
                 {aiOutput.meeting_overview.topics.length > 0 && (
@@ -414,51 +393,91 @@ export default function MeetingDetailScreen() {
                     ))}
                   </View>
                 )}
-                <HighlightedText
-                  text={aiOutput.meeting_overview.one_sentence_summary}
-                  searchQuery={searchQuery}
-                />
-              </View>
-            ) : (
-              <View style={styles.noData}>
-                <Text style={styles.noDataText}>
-                  {meeting.status === "processing"
-                    ? "Summary is being generated..."
-                    : "No summary available"}
+                <Text style={styles.summaryText}>
+                  {aiOutput.meeting_overview.one_sentence_summary}
                 </Text>
               </View>
+            ) : (
+              <Text style={styles.noDataText}>
+                {meeting.status === "processing"
+                  ? "Summary is being generated..."
+                  : "No summary available"}
+              </Text>
             )}
           </View>
         )}
 
-        {activeTab === "transcript" && (
-          <View style={styles.tabContent}>
-            {showSearch && (
-              <View style={styles.searchContainer}>
-                <View style={styles.searchInputWrapper}>
-                  <Search size={18} color={Colors.textMuted} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search transcript..."
-                    placeholderTextColor={Colors.textMuted}
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    autoFocus
-                  />
-                  {searchQuery.length > 0 && (
-                    <Pressable onPress={() => setSearchQuery("")}>
-                      <X size={18} color={Colors.textMuted} />
-                    </Pressable>
-                  )}
-                </View>
-                {searchQuery.length > 0 && (
-                  <Text style={styles.searchResultCount}>
-                    {matchCount} {matchCount === 1 ? "match" : "matches"} found
+        {aiOutput?.follow_up_actions && aiOutput.follow_up_actions.length > 0 && (
+          <View style={styles.actionsList}>
+            <Text style={styles.sectionTitleStatic}>Action Items</Text>
+            {aiOutput.follow_up_actions.map((action, index) => (
+              <Pressable
+                key={index}
+                style={styles.actionItem}
+                onPress={() => handleToggleAction(index, !action.completed)}
+              >
+                <View
+                  style={[
+                    styles.actionCheckbox,
+                    action.completed && styles.actionCheckboxChecked,
+                  ]}
+                />
+                <View style={styles.actionContent}>
+                  <Text
+                    style={[
+                      styles.actionText,
+                      action.completed && styles.actionTextCompleted,
+                    ]}
+                  >
+                    {action.action}
                   </Text>
-                )}
-              </View>
-            )}
+                  <View style={styles.actionMeta}>
+                    <Text style={styles.actionOwner}>{action.owner}</Text>
+                    {action.deadline && (
+                      <Text style={styles.actionDeadline}>Due: {action.deadline}</Text>
+                    )}
+                  </View>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
+        {meeting.billable && (
+          <View style={styles.billingSection}>
+            <View style={styles.billingSummary}>
+              <View style={styles.billingIconWrapper}>
+                <DollarSign size={16} color={Colors.success} />
+              </View>
+              <View style={styles.billingInfo}>
+                <Text style={styles.billingSummaryLabel}>Billable Amount</Text>
+                <Text style={styles.billingSummaryValue}>
+                  {formatBillable(meeting.billable_seconds, meeting.hourly_rate_snapshot)}
+                </Text>
+              </View>
+              <View style={styles.billingDetail}>
+                <Text style={styles.billingDetailText}>
+                  {formatDuration(meeting.billable_seconds)} @ ${meeting.hourly_rate_snapshot}/hr
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        <Pressable
+          style={styles.sectionHeader}
+          onPress={() => setExpandedTranscript(!expandedTranscript)}
+        >
+          <Text style={styles.sectionTitle}>Transcript</Text>
+          {expandedTranscript ? (
+            <ChevronUp size={20} color={Colors.text} />
+          ) : (
+            <ChevronDown size={20} color={Colors.text} />
+          )}
+        </Pressable>
+
+        {expandedTranscript && (
+          <View style={styles.sectionContent}>
             {filteredTranscript.length > 0 ? (
               filteredTranscript.map((segment, index) => (
                 <View key={segment.id || index} style={styles.transcriptSegment}>
@@ -477,102 +496,18 @@ export default function MeetingDetailScreen() {
             ) : searchQuery.trim() &&
               meeting.transcript_segments &&
               meeting.transcript_segments.length > 0 ? (
-              <View style={styles.noData}>
-                <Text style={styles.noDataText}>No matches found</Text>
-              </View>
+              <Text style={styles.noDataText}>No matches found</Text>
             ) : (
-              <View style={styles.noData}>
-                <Text style={styles.noDataText}>
-                  {meeting.status === "processing"
-                    ? "Transcript is being generated..."
-                    : "No transcript available"}
-                </Text>
-              </View>
+              <Text style={styles.noDataText}>
+                {meeting.status === "processing"
+                  ? "Transcript is being generated..."
+                  : "No transcript available"}
+              </Text>
             )}
           </View>
         )}
 
-        {activeTab === "actions" && (
-          <View style={styles.tabContent}>
-            {aiOutput?.follow_up_actions && aiOutput.follow_up_actions.length > 0 ? (
-              aiOutput.follow_up_actions.map((action, index) => (
-                <Pressable
-                  key={index}
-                  style={styles.actionItem}
-                  onPress={() => handleToggleAction(index, !action.completed)}
-                >
-                  <View
-                    style={[
-                      styles.actionCheckbox,
-                      action.completed && styles.actionCheckboxChecked,
-                    ]}
-                  />
-                  <View style={styles.actionContent}>
-                    <Text
-                      style={[
-                        styles.actionText,
-                        action.completed && styles.actionTextCompleted,
-                      ]}
-                    >
-                      {action.action}
-                    </Text>
-                    <View style={styles.actionMeta}>
-                      <Text style={styles.actionOwner}>{action.owner}</Text>
-                      {action.deadline && (
-                        <Text style={styles.actionDeadline}>Due: {action.deadline}</Text>
-                      )}
-                    </View>
-                  </View>
-                </Pressable>
-              ))
-            ) : (
-              <View style={styles.noData}>
-                <Text style={styles.noDataText}>No action items found</Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {activeTab === "billing" && (
-          <View style={styles.tabContent}>
-            <View style={styles.billingCard}>
-              <View style={styles.billingRow}>
-                <Text style={styles.billingLabel}>Duration</Text>
-                <Text style={styles.billingValue}>
-                  {formatDuration(meeting.duration_seconds)}
-                </Text>
-              </View>
-              <View style={styles.billingRow}>
-                <Text style={styles.billingLabel}>Billable</Text>
-                <Text style={styles.billingValue}>
-                  {meeting.billable ? "Yes" : "No"}
-                </Text>
-              </View>
-              {meeting.billable && (
-                <>
-                  <View style={styles.billingRow}>
-                    <Text style={styles.billingLabel}>Billable Time</Text>
-                    <Text style={styles.billingValue}>
-                      {formatDuration(meeting.billable_seconds)}
-                    </Text>
-                  </View>
-                  <View style={styles.billingRow}>
-                    <Text style={styles.billingLabel}>Rate</Text>
-                    <Text style={styles.billingValue}>
-                      ${meeting.hourly_rate_snapshot}/hr
-                    </Text>
-                  </View>
-                  <View style={[styles.billingRow, styles.billingTotal]}>
-                    <Text style={styles.billingTotalLabel}>Total</Text>
-                    <Text style={styles.billingTotalValue}>
-                      {formatBillable(meeting.billable_seconds, meeting.hourly_rate_snapshot)}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
-          </View>
-        )}
+        <View style={{ height: 100 }} />
       </ScrollView>
 
       {meeting.audio_path && (
@@ -627,78 +562,45 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
   backButton: {
-    padding: 8,
+    padding: 4,
+    marginRight: 4,
   },
   headerCenter: {
     flex: 1,
-    marginLeft: 8,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "600" as const,
     color: Colors.text,
+    marginBottom: 2,
+  },
+  headerMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   headerSubtitle: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMuted,
+  },
+  dot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: Colors.textMuted,
   },
   headerActions: {
     flexDirection: "row",
-    gap: 8,
+    gap: 4,
   },
   iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.surface,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  menuDropdown: {
-    position: "absolute",
-    top: 70,
-    right: 16,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    zIndex: 100,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    gap: 12,
-  },
-  menuItemText: {
-    fontSize: 15,
-    color: Colors.text,
-  },
-  tabsContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingRight: 12,
-  },
-  tabs: {
-    flex: 1,
-    flexDirection: "row",
-    paddingHorizontal: 16,
-  },
-  searchButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -706,51 +608,58 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  searchButtonActive: {
-    backgroundColor: `${Colors.accentLight}20`,
+  menuDropdown: {
+    position: "absolute",
+    top: 60,
+    right: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    zIndex: 100,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
+    minWidth: 160,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 16,
+  menuItem: {
+    flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: 3,
-    borderBottomColor: "transparent",
+    padding: 14,
+    gap: 10,
   },
-  tabActive: {
-    borderBottomWidth: 3,
-    borderBottomColor: Colors.accentLight,
-  },
-  tabText: {
-    fontSize: 15,
-    fontWeight: "600" as const,
-    color: Colors.textSecondary,
-  },
-  tabTextActive: {
+  menuItemText: {
+    fontSize: 14,
     color: Colors.text,
-    fontWeight: "700" as const,
   },
   content: {
     flex: 1,
   },
-  tabContent: {
-    padding: 16,
-  },
   disclaimer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: `${Colors.warning}15`,
+    backgroundColor: `${Colors.warning}10`,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
     marginBottom: 16,
-    gap: 8,
+    borderRadius: 6,
+    gap: 6,
   },
   disclaimerText: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.warning,
+    flex: 1,
   },
   searchContainer: {
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   searchInputWrapper: {
     flexDirection: "row",
@@ -780,40 +689,67 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontWeight: "600" as const,
   },
-  summaryCard: {
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  sectionTitleStatic: {
+    fontSize: 16,
+    fontWeight: "600" as const,
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  sectionContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  summaryCard: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 10,
+    padding: 14,
+  },
+  summaryText: {
+    fontSize: 15,
+    color: Colors.text,
+    lineHeight: 22,
   },
   topicsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginBottom: 14,
-    gap: 8,
+    marginBottom: 10,
+    gap: 6,
   },
   topicTag: {
-    backgroundColor: Colors.surfaceLight,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    backgroundColor: Colors.accentLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
   },
   topicText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  noData: {
-    alignItems: "center",
-    paddingVertical: 48,
+    fontSize: 11,
+    color: Colors.background,
+    fontWeight: "500" as const,
   },
   noDataText: {
-    fontSize: 16,
+    fontSize: 14,
     color: Colors.textMuted,
+    textAlign: "center",
+    paddingVertical: 24,
   },
   transcriptSegment: {
-    marginBottom: 16,
-    paddingBottom: 16,
+    marginBottom: 14,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -832,28 +768,34 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
   },
   segmentText: {
-    fontSize: 15,
+    fontSize: 14,
     color: Colors.text,
-    lineHeight: 22,
+    lineHeight: 21,
+  },
+  actionsList: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   actionItem: {
     flexDirection: "row",
     alignItems: "flex-start",
-    padding: 16,
+    padding: 12,
     backgroundColor: Colors.surface,
-    borderRadius: 12,
-    marginBottom: 12,
+    borderRadius: 8,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   actionCheckbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: Colors.border,
-    marginRight: 12,
-    marginTop: 2,
+    marginRight: 10,
+    marginTop: 1,
   },
   actionCheckboxChecked: {
     backgroundColor: Colors.success,
@@ -863,9 +805,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   actionText: {
-    fontSize: 15,
+    fontSize: 14,
     color: Colors.text,
-    lineHeight: 22,
+    lineHeight: 20,
   },
   actionTextCompleted: {
     textDecorationLine: "line-through",
@@ -873,54 +815,61 @@ const styles = StyleSheet.create({
   },
   actionMeta: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 8,
+    gap: 10,
+    marginTop: 6,
   },
   actionOwner: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.accentLight,
     fontWeight: "500" as const,
   },
   actionDeadline: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textMuted,
   },
-  billingCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  billingRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 12,
+  billingSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  billingLabel: {
-    fontSize: 15,
-    color: Colors.textSecondary,
+  billingSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  billingValue: {
-    fontSize: 15,
-    fontWeight: "600" as const,
-    color: Colors.text,
+  billingIconWrapper: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: `${Colors.success}15`,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
-  billingTotal: {
-    borderBottomWidth: 0,
-    marginTop: 8,
+  billingInfo: {
+    flex: 1,
   },
-  billingTotalLabel: {
-    fontSize: 17,
-    fontWeight: "600" as const,
-    color: Colors.text,
+  billingSummaryLabel: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginBottom: 2,
   },
-  billingTotalValue: {
-    fontSize: 20,
+  billingSummaryValue: {
+    fontSize: 18,
     fontWeight: "700" as const,
     color: Colors.success,
+  },
+  billingDetail: {
+    alignItems: "flex-end",
+  },
+  billingDetailText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
   },
   audioBar: {
     flexDirection: "row",
