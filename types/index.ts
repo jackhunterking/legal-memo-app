@@ -200,6 +200,7 @@ export interface MeetingTask {
   description: string | null;
   priority: TaskPriority;
   completed: boolean;
+  deadline: string | null;
   reminder_time: string | null;
   notification_id: string | null;
   owner: string | null;

@@ -34,6 +34,10 @@ import {
   Share2,
   Sparkles,
   ChevronDown,
+  Calendar,
+  Bell,
+  Flag,
+  ChevronRight,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
@@ -247,62 +251,326 @@ const TranscriptBottomSheet = ({
   );
 };
 
-// Quick Add Task Modal Component
-const QuickAddTaskModal = ({ visible, onClose, onAdd, isCreating }: any) => {
+type DeadlineOption = 'none' | 'today' | 'tomorrow' | 'next_week' | 'custom';
+type ReminderOption = 'none' | 'at_deadline' | '1_hour' | '1_day' | '3_days';
+type PriorityOption = 'low' | 'medium' | 'high';
+
+const DEADLINE_OPTIONS: { key: DeadlineOption; label: string }[] = [
+  { key: 'none', label: 'No deadline' },
+  { key: 'today', label: 'Today' },
+  { key: 'tomorrow', label: 'Tomorrow' },
+  { key: 'next_week', label: 'Next week' },
+];
+
+const REMINDER_OPTIONS: { key: ReminderOption; label: string }[] = [
+  { key: 'none', label: 'No reminder' },
+  { key: 'at_deadline', label: 'At deadline' },
+  { key: '1_hour', label: '1 hour before' },
+  { key: '1_day', label: '1 day before' },
+  { key: '3_days', label: '3 days before' },
+];
+
+const PRIORITY_OPTIONS: { key: PriorityOption; label: string; color: string }[] = [
+  { key: 'low', label: 'Low', color: Colors.textMuted },
+  { key: 'medium', label: 'Medium', color: Colors.warning },
+  { key: 'high', label: 'High', color: Colors.error },
+];
+
+const getDeadlineDate = (option: DeadlineOption): Date | null => {
+  const now = new Date();
+  switch (option) {
+    case 'today':
+      now.setHours(23, 59, 59, 999);
+      return now;
+    case 'tomorrow':
+      now.setDate(now.getDate() + 1);
+      now.setHours(23, 59, 59, 999);
+      return now;
+    case 'next_week':
+      now.setDate(now.getDate() + 7);
+      now.setHours(23, 59, 59, 999);
+      return now;
+    default:
+      return null;
+  }
+};
+
+const getReminderDate = (deadline: Date | null, option: ReminderOption): Date | null => {
+  if (!deadline || option === 'none') return null;
+  const reminder = new Date(deadline);
+  switch (option) {
+    case 'at_deadline':
+      return reminder;
+    case '1_hour':
+      reminder.setHours(reminder.getHours() - 1);
+      return reminder;
+    case '1_day':
+      reminder.setDate(reminder.getDate() - 1);
+      return reminder;
+    case '3_days':
+      reminder.setDate(reminder.getDate() - 3);
+      return reminder;
+    default:
+      return null;
+  }
+};
+
+const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any) => {
   const [taskTitle, setTaskTitle] = useState("");
+  const [selectedDeadline, setSelectedDeadline] = useState<DeadlineOption>('none');
+  const [selectedReminder, setSelectedReminder] = useState<ReminderOption>('none');
+  const [selectedPriority, setSelectedPriority] = useState<PriorityOption>('medium');
+  const [showDeadlineOptions, setShowDeadlineOptions] = useState(false);
+  const [showReminderOptions, setShowReminderOptions] = useState(false);
+  const [showPriorityOptions, setShowPriorityOptions] = useState(false);
+
+  const shortMeetingName = useMemo(() => {
+    if (!meetingTitle) return '';
+    const words = meetingTitle.split(/\s+/).filter((w: string) => w.length > 0);
+    return words.slice(0, 3).join(' ');
+  }, [meetingTitle]);
+
+  const deadlineDate = useMemo(() => getDeadlineDate(selectedDeadline), [selectedDeadline]);
+  const reminderDate = useMemo(() => getReminderDate(deadlineDate, selectedReminder), [deadlineDate, selectedReminder]);
 
   const handleAdd = () => {
     if (taskTitle.trim()) {
-      onAdd(taskTitle.trim());
-      setTaskTitle("");
+      onAdd({
+        title: taskTitle.trim(),
+        deadline: deadlineDate?.toISOString() || null,
+        reminder_time: reminderDate?.toISOString() || null,
+        priority: selectedPriority,
+      });
+      resetForm();
     }
+  };
+
+  const resetForm = () => {
+    setTaskTitle("");
+    setSelectedDeadline('none');
+    setSelectedReminder('none');
+    setSelectedPriority('medium');
+    setShowDeadlineOptions(false);
+    setShowReminderOptions(false);
+    setShowPriorityOptions(false);
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  const getDeadlineLabel = () => {
+    const option = DEADLINE_OPTIONS.find(o => o.key === selectedDeadline);
+    return option?.label || 'No deadline';
+  };
+
+  const getReminderLabel = () => {
+    const option = REMINDER_OPTIONS.find(o => o.key === selectedReminder);
+    return option?.label || 'No reminder';
+  };
+
+  const getPriorityOption = () => {
+    return PRIORITY_OPTIONS.find(o => o.key === selectedPriority) || PRIORITY_OPTIONS[1];
   };
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
-      onRequestClose={onClose}
+      animationType="slide"
+      onRequestClose={handleClose}
     >
-      <View style={styles.modalOverlay}>
-        <Pressable style={styles.modalBackdrop} onPress={onClose} />
-        <View style={styles.quickAddModalContent}>
-          <View style={styles.quickAddModalHeader}>
-            <Text style={styles.quickAddModalTitle}>Add Task</Text>
-            <Pressable onPress={onClose}>
+      <View style={styles.bottomSheetOverlay}>
+        <Pressable style={styles.bottomSheetBackdrop} onPress={handleClose} />
+        <View style={styles.addTaskSheetContainer}>
+          <View style={styles.bottomSheetHandle} />
+          <View style={styles.bottomSheetHeader}>
+            <Text style={styles.bottomSheetTitle}>Add Task</Text>
+            <Pressable onPress={handleClose} style={styles.bottomSheetClose}>
               <X size={24} color={Colors.text} />
             </Pressable>
           </View>
 
-          <TextInput
-            style={styles.quickAddInput}
-            placeholder="What needs to be done?"
-            placeholderTextColor={Colors.textMuted}
-            value={taskTitle}
-            onChangeText={setTaskTitle}
-            autoFocus
-            multiline
-            numberOfLines={2}
-            onSubmitEditing={handleAdd}
-          />
+          <ScrollView style={styles.addTaskContent} showsVerticalScrollIndicator={false}>
+            {shortMeetingName && (
+              <View style={styles.meetingContext}>
+                <Text style={styles.meetingContextLabel}>Meeting</Text>
+                <Text style={styles.meetingContextName} numberOfLines={1}>{shortMeetingName}</Text>
+              </View>
+            )}
 
-          <Text style={styles.quickAddHelperText}>
-            AI will suggest owner and due date based on meeting context
-          </Text>
+            <View style={styles.taskInputContainer}>
+              <TextInput
+                style={styles.taskTitleInput}
+                placeholder="What needs to be done?"
+                placeholderTextColor={Colors.textMuted}
+                value={taskTitle}
+                onChangeText={setTaskTitle}
+                autoFocus
+                multiline
+                numberOfLines={2}
+              />
+            </View>
 
-          <View style={styles.quickAddActions}>
+            {/* Deadline Section */}
             <Pressable
-              style={[styles.quickAddButton, styles.quickAddCancelButton]}
-              onPress={onClose}
+              style={styles.optionRow}
+              onPress={() => {
+                setShowDeadlineOptions(!showDeadlineOptions);
+                setShowReminderOptions(false);
+                setShowPriorityOptions(false);
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
             >
-              <Text style={styles.quickAddCancelText}>Cancel</Text>
+              <View style={styles.optionIconWrapper}>
+                <Calendar size={20} color={selectedDeadline !== 'none' ? Colors.accentLight : Colors.textMuted} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={styles.optionLabel}>Deadline</Text>
+                <Text style={[styles.optionValue, selectedDeadline !== 'none' && styles.optionValueActive]}>
+                  {getDeadlineLabel()}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showDeadlineOptions ? '90deg' : '0deg' }] }} />
             </Pressable>
+
+            {showDeadlineOptions && (
+              <View style={styles.optionChipsContainer}>
+                {DEADLINE_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedDeadline === option.key && styles.optionChipActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedDeadline(option.key);
+                      if (option.key === 'none') setSelectedReminder('none');
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedDeadline === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {/* Reminder Section */}
+            <Pressable
+              style={[styles.optionRow, selectedDeadline === 'none' && styles.optionRowDisabled]}
+              onPress={() => {
+                if (selectedDeadline === 'none') return;
+                setShowReminderOptions(!showReminderOptions);
+                setShowDeadlineOptions(false);
+                setShowPriorityOptions(false);
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              disabled={selectedDeadline === 'none'}
+            >
+              <View style={styles.optionIconWrapper}>
+                <Bell size={20} color={selectedReminder !== 'none' ? Colors.accentLight : Colors.textMuted} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={[styles.optionLabel, selectedDeadline === 'none' && styles.optionLabelDisabled]}>Reminder</Text>
+                <Text style={[
+                  styles.optionValue,
+                  selectedReminder !== 'none' && styles.optionValueActive,
+                  selectedDeadline === 'none' && styles.optionValueDisabled,
+                ]}>
+                  {selectedDeadline === 'none' ? 'Set deadline first' : getReminderLabel()}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showReminderOptions ? '90deg' : '0deg' }] }} />
+            </Pressable>
+
+            {showReminderOptions && selectedDeadline !== 'none' && (
+              <View style={styles.optionChipsContainer}>
+                {REMINDER_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedReminder === option.key && styles.optionChipActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedReminder(option.key);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedReminder === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {/* Priority Section */}
+            <Pressable
+              style={styles.optionRow}
+              onPress={() => {
+                setShowPriorityOptions(!showPriorityOptions);
+                setShowDeadlineOptions(false);
+                setShowReminderOptions(false);
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <View style={styles.optionIconWrapper}>
+                <Flag size={20} color={getPriorityOption().color} />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={styles.optionLabel}>Priority</Text>
+                <Text style={[styles.optionValue, { color: getPriorityOption().color }]}>
+                  {getPriorityOption().label}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showPriorityOptions ? '90deg' : '0deg' }] }} />
+            </Pressable>
+
+            {showPriorityOptions && (
+              <View style={styles.optionChipsContainer}>
+                {PRIORITY_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[
+                      styles.optionChip,
+                      selectedPriority === option.key && styles.optionChipActive,
+                      { borderColor: option.color },
+                    ]}
+                    onPress={() => {
+                      setSelectedPriority(option.key);
+                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Flag size={14} color={selectedPriority === option.key ? Colors.background : option.color} />
+                    <Text style={[
+                      styles.optionChipText,
+                      selectedPriority === option.key && styles.optionChipTextActive,
+                    ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <View style={{ height: 20 }} />
+          </ScrollView>
+
+          <View style={styles.addTaskFooter}>
             <Pressable
               style={[
-                styles.quickAddButton,
-                styles.quickAddAddButton,
-                !taskTitle.trim() && styles.quickAddAddButtonDisabled,
+                styles.addTaskButton,
+                !taskTitle.trim() && styles.addTaskButtonDisabled,
               ]}
               onPress={handleAdd}
               disabled={!taskTitle.trim() || isCreating}
@@ -310,7 +578,7 @@ const QuickAddTaskModal = ({ visible, onClose, onAdd, isCreating }: any) => {
               {isCreating ? (
                 <ActivityIndicator size="small" color={Colors.background} />
               ) : (
-                <Text style={styles.quickAddAddText}>Add Task</Text>
+                <Text style={styles.addTaskButtonText}>Add Task</Text>
               )}
             </Pressable>
           </View>
@@ -484,7 +752,7 @@ export default function MeetingDetailScreen() {
       title: task.title,
       completed: task.completed,
       owner: task.owner,
-      dueDate: task.reminder_time,
+      dueDate: task.deadline || task.reminder_time,
       isAIGenerated: false,
       rawTask: task,
     }));
@@ -770,15 +1038,16 @@ export default function MeetingDetailScreen() {
     }
   };
 
-  const handleAddTask = async (title: string) => {
+  const handleAddTask = async (taskData: {
+    title: string;
+    deadline: string | null;
+    reminder_time: string | null;
+    priority: 'low' | 'medium' | 'high';
+  }) => {
     if (!id) return;
 
     try {
-      // Call AI enhancement edge function to get suggestions
-      let enhancedData = {
-        owner: null as string | null,
-        suggested_deadline: null as string | null,
-      };
+      let owner: string | null = null;
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -795,28 +1064,29 @@ export default function MeetingDetailScreen() {
               },
               body: JSON.stringify({
                 meeting_id: id,
-                task_title: title,
+                task_title: taskData.title,
               }),
             }
           );
 
           if (response.ok) {
-            enhancedData = await response.json();
+            const enhancedData = await response.json();
+            owner = enhancedData.owner;
             console.log("[EnhanceTask] AI suggestions:", enhancedData);
           }
         }
       } catch (enhanceError) {
-        console.warn("[EnhanceTask] Enhancement failed, using defaults:", enhanceError);
-        // Continue with default values if enhancement fails
+        console.warn("[EnhanceTask] Enhancement failed:", enhanceError);
       }
 
       await createTask({
         meeting_id: id,
-        title,
+        title: taskData.title,
         description: null,
-        priority: "medium",
-        owner: enhancedData.owner,
-        reminder_time: enhancedData.suggested_deadline,
+        priority: taskData.priority,
+        deadline: taskData.deadline,
+        reminder_time: taskData.reminder_time,
+        owner,
       });
 
       setShowQuickAdd(false);
@@ -1187,11 +1457,12 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
         onSeek={handleSeekToTimestamp}
       />
 
-      <QuickAddTaskModal
+      <AddTaskSheet
         visible={showQuickAdd}
         onClose={() => setShowQuickAdd(false)}
         onAdd={handleAddTask}
         isCreating={isCreating}
+        meetingTitle={title}
       />
     </SafeAreaView>
   );
@@ -1760,6 +2031,148 @@ const styles = StyleSheet.create({
   quickAddAddText: {
     fontSize: 15,
     fontWeight: "600",
+    color: Colors.background,
+  },
+  // Add Task Sheet Styles
+  addTaskSheetContainer: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "90%",
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+  },
+  addTaskContent: {
+    paddingHorizontal: 20,
+    maxHeight: 400,
+  },
+  meetingContext: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  meetingContextLabel: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  meetingContextName: {
+    fontSize: 14,
+    fontWeight: "600" as const,
+    color: Colors.text,
+  },
+  taskInputContainer: {
+    marginBottom: 16,
+  },
+  taskTitleInput: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
+    color: Colors.text,
+    minHeight: 80,
+    textAlignVertical: "top" as const,
+  },
+  optionRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  optionRowDisabled: {
+    opacity: 0.5,
+  },
+  optionIconWrapper: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    marginRight: 12,
+  },
+  optionTextContainer: {
+    flex: 1,
+  },
+  optionLabel: {
+    fontSize: 14,
+    fontWeight: "600" as const,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  optionLabelDisabled: {
+    color: Colors.textMuted,
+  },
+  optionValue: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  optionValueActive: {
+    color: Colors.accentLight,
+    fontWeight: "500" as const,
+  },
+  optionValueDisabled: {
+    color: Colors.textMuted,
+  },
+  optionChipsContainer: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 8,
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  optionChip: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 6,
+  },
+  optionChipActive: {
+    backgroundColor: Colors.accentLight,
+    borderColor: Colors.accentLight,
+  },
+  optionChipText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: "500" as const,
+  },
+  optionChipTextActive: {
+    color: Colors.background,
+    fontWeight: "600" as const,
+  },
+  addTaskFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  addTaskButton: {
+    backgroundColor: Colors.accentLight,
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: "center" as const,
+  },
+  addTaskButtonDisabled: {
+    opacity: 0.5,
+  },
+  addTaskButtonText: {
+    fontSize: 16,
+    fontWeight: "600" as const,
     color: Colors.background,
   },
 });

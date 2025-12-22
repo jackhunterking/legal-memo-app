@@ -97,6 +97,7 @@ export const [TaskProvider, useTasks] = createContextHook(() => {
           description: task.description,
           priority: task.priority || 'medium',
           completed: task.completed || false,
+          deadline: task.deadline,
           reminder_time: task.reminder_time,
           owner: task.owner,
         })
