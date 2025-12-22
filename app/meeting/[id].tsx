@@ -92,6 +92,7 @@ export default function MeetingDetailScreen() {
   const blobUrlRef = useRef<string | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioLoadError, setAudioLoadError] = useState(false);
+  const [audioErrorMessage, setAudioErrorMessage] = useState<string | null>(null);
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
   const progressBarRef = useRef<View>(null);
@@ -124,6 +125,7 @@ export default function MeetingDetailScreen() {
     try {
       setIsAudioLoading(true);
       setAudioLoadError(false);
+      setAudioErrorMessage(null);
       console.log('[AudioPlayer] Loading audio from:', meeting.audio_path);
 
       // Download the audio file as a blob first
@@ -135,10 +137,42 @@ export default function MeetingDetailScreen() {
       if (downloadError || !audioBlob) {
         console.error('[AudioPlayer] Error downloading audio:', downloadError);
         setAudioLoadError(true);
+        setAudioErrorMessage('Could not download audio');
         return;
       }
 
-      console.log('[AudioPlayer] Audio downloaded successfully, size:', audioBlob.size, 'type:', audioBlob.type);
+      // Detect audio format from blob type, file extension, and file header
+      const blobType = audioBlob.type || '';
+      const filePath = meeting.audio_path.toLowerCase();
+      
+      // Check file header (magic bytes) to detect actual format
+      // WebM files start with 0x1A 0x45 0xDF 0xA3 (EBML header)
+      // This is important because old recordings may have .m4a extension but WebM content
+      let isActuallyWebm = false;
+      try {
+        const headerBytes = new Uint8Array(await audioBlob.slice(0, 4).arrayBuffer());
+        isActuallyWebm = headerBytes[0] === 0x1A && headerBytes[1] === 0x45 && 
+                         headerBytes[2] === 0xDF && headerBytes[3] === 0xA3;
+        if (isActuallyWebm) {
+          console.log('[AudioPlayer] Detected WebM format from file header');
+        }
+      } catch (e) {
+        console.log('[AudioPlayer] Could not read file header:', e);
+      }
+      
+      const isWebmFormat = isActuallyWebm || blobType.includes('webm') || filePath.endsWith('.webm');
+      const isOggFormat = blobType.includes('ogg') || filePath.endsWith('.ogg');
+      
+      console.log('[AudioPlayer] Audio downloaded, size:', audioBlob.size, 'type:', blobType, 'path:', filePath, 'isWebm:', isWebmFormat);
+
+      // Check for format compatibility on iOS
+      // iOS does NOT support WebM or OGG formats natively
+      if (Platform.OS === 'ios' && (isWebmFormat || isOggFormat)) {
+        console.warn('[AudioPlayer] WebM/OGG format detected on iOS - not supported');
+        setAudioLoadError(true);
+        setAudioErrorMessage('This recording was made on web and cannot be played on iOS. Open in web browser to listen.');
+        return;
+      }
 
       let audioUri: string;
 
@@ -179,10 +213,21 @@ export default function MeetingDetailScreen() {
 
       soundRef.current = sound;
       setAudioLoadError(false);
+      setAudioErrorMessage(null);
       console.log('[AudioPlayer] Audio loaded successfully');
     } catch (error) {
       console.error('[AudioPlayer] Error loading audio:', error);
       setAudioLoadError(true);
+      
+      // Provide specific error messages based on error type
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('-11829') || errorMsg.includes('damaged')) {
+        setAudioErrorMessage('Audio format not compatible. Recording may have been made on a different platform.');
+      } else if (errorMsg.includes('-11850')) {
+        setAudioErrorMessage('Unable to stream audio. Please try again.');
+      } else {
+        setAudioErrorMessage('Could not play audio');
+      }
     } finally {
       setIsAudioLoading(false);
     }
@@ -858,7 +903,9 @@ export default function MeetingDetailScreen() {
           {audioLoadError ? (
             <View style={styles.audioErrorContainer}>
               <AlertTriangle size={16} color={Colors.warning} />
-              <Text style={styles.audioErrorText}>Audio unavailable</Text>
+              <Text style={styles.audioErrorText} numberOfLines={2}>
+                {audioErrorMessage || 'Audio unavailable'}
+              </Text>
             </View>
           ) : isAudioLoading ? (
             <View style={styles.audioErrorContainer}>
@@ -1282,10 +1329,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 8,
   },
   audioErrorText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMuted,
+    flex: 1,
+    flexWrap: 'wrap',
   },
   taskHeaderActions: {
     flexDirection: 'row',
