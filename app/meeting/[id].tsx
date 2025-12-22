@@ -11,6 +11,7 @@ import {
   TextInput,
   Modal,
   Share,
+  Switch,
 } from "react-native";
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Audio, AVPlaybackStatus } from "expo-av";
@@ -320,6 +321,7 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
   const [taskTitle, setTaskTitle] = useState("");
   const [selectedDeadline, setSelectedDeadline] = useState<DeadlineOption>('none');
   const [customDeadline, setCustomDeadline] = useState<Date | null>(null);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
   const [selectedReminder, setSelectedReminder] = useState<ReminderOption>('none');
   const [selectedPriority, setSelectedPriority] = useState<PriorityOption>('medium');
   const [showDeadlineOptions, setShowDeadlineOptions] = useState(false);
@@ -327,11 +329,7 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
   const [showPriorityOptions, setShowPriorityOptions] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const shortMeetingName = useMemo(() => {
-    if (!meetingTitle) return '';
-    const words = meetingTitle.split(/\s+/).filter((w: string) => w.length > 0);
-    return words.slice(0, 3).join(' ');
-  }, [meetingTitle]);
+
 
   const deadlineDate = useMemo(() => {
     if (selectedDeadline === 'custom') return customDeadline;
@@ -345,7 +343,7 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
       onAdd({
         title: taskTitle.trim(),
         deadline: deadlineDate?.toISOString() || null,
-        reminder_time: reminderDate?.toISOString() || null,
+        reminder_time: reminderEnabled ? reminderDate?.toISOString() || null : null,
         priority: selectedPriority,
       });
       resetForm();
@@ -356,6 +354,7 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
     setTaskTitle("");
     setSelectedDeadline('none');
     setCustomDeadline(null);
+    setReminderEnabled(false);
     setSelectedReminder('none');
     setSelectedPriority('medium');
     setShowDeadlineOptions(false);
@@ -406,11 +405,6 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
     return `${dateStr} at ${timeStr}`;
   };
 
-  const getReminderLabel = () => {
-    const option = REMINDER_OPTIONS.find(o => o.key === selectedReminder);
-    return option?.label || 'No reminder';
-  };
-
   const getPriorityOption = () => {
     return PRIORITY_OPTIONS.find(o => o.key === selectedPriority) || PRIORITY_OPTIONS[1];
   };
@@ -434,13 +428,6 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
           </View>
 
           <ScrollView style={styles.addTaskContent} showsVerticalScrollIndicator={false}>
-            {shortMeetingName && (
-              <View style={styles.meetingContext}>
-                <Text style={styles.meetingContextLabel}>Meeting</Text>
-                <Text style={styles.meetingContextName} numberOfLines={1}>{shortMeetingName}</Text>
-              </View>
-            )}
-
             <View style={styles.taskInputContainer}>
               <TextInput
                 style={styles.taskTitleInput}
@@ -552,36 +539,45 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
             )}
 
             {/* Reminder Section */}
-            <Pressable
-              style={[styles.optionRow, selectedDeadline === 'none' && styles.optionRowDisabled]}
-              onPress={() => {
-                if (selectedDeadline === 'none') return;
-                setShowReminderOptions(!showReminderOptions);
-                setShowDeadlineOptions(false);
-                setShowPriorityOptions(false);
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }}
-              disabled={selectedDeadline === 'none'}
-            >
+            <View style={[styles.optionRow, selectedDeadline === 'none' && styles.optionRowDisabled]}>
               <View style={styles.optionIconWrapper}>
-                <Bell size={20} color={selectedReminder !== 'none' ? Colors.accentLight : Colors.textMuted} />
+                <Bell size={20} color={reminderEnabled && selectedDeadline !== 'none' ? Colors.accentLight : Colors.textMuted} />
               </View>
               <View style={styles.optionTextContainer}>
                 <Text style={[styles.optionLabel, selectedDeadline === 'none' && styles.optionLabelDisabled]}>Reminder</Text>
                 <Text style={[
                   styles.optionValue,
-                  selectedReminder !== 'none' && styles.optionValueActive,
                   selectedDeadline === 'none' && styles.optionValueDisabled,
                 ]}>
-                  {selectedDeadline === 'none' ? 'Set deadline first' : getReminderLabel()}
+                  {selectedDeadline === 'none' ? 'Set deadline first' : (reminderEnabled ? 'Enabled' : 'Disabled')}
                 </Text>
               </View>
-              <ChevronRight size={18} color={Colors.textMuted} style={{ transform: [{ rotate: showReminderOptions ? '90deg' : '0deg' }] }} />
-            </Pressable>
+              <Switch
+                value={reminderEnabled && selectedDeadline !== 'none'}
+                onValueChange={(value) => {
+                  if (selectedDeadline === 'none') return;
+                  setReminderEnabled(value);
+                  if (value) {
+                    setShowReminderOptions(true);
+                    setShowDeadlineOptions(false);
+                    setShowPriorityOptions(false);
+                    if (selectedReminder === 'none') {
+                      setSelectedReminder('at_deadline');
+                    }
+                  } else {
+                    setShowReminderOptions(false);
+                  }
+                  if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                disabled={selectedDeadline === 'none'}
+                trackColor={{ false: Colors.border, true: Colors.accentLight }}
+                thumbColor={Colors.background}
+              />
+            </View>
 
-            {showReminderOptions && selectedDeadline !== 'none' && (
+            {showReminderOptions && reminderEnabled && selectedDeadline !== 'none' && (
               <View style={styles.optionChipsContainer}>
-                {REMINDER_OPTIONS.map((option) => (
+                {REMINDER_OPTIONS.filter(opt => opt.key !== 'none').map((option) => (
                   <Pressable
                     key={option.key}
                     style={[
@@ -604,7 +600,7 @@ const AddTaskSheet = ({ visible, onClose, onAdd, isCreating, meetingTitle }: any
               </View>
             )}
             
-            {selectedReminder !== 'none' && reminderDate && (
+            {reminderEnabled && selectedReminder !== 'none' && reminderDate && (
               <View style={styles.selectedDateTimeContainer}>
                 <Bell size={14} color={Colors.accentLight} />
                 <Text style={styles.selectedDateTimeText}>
@@ -2180,28 +2176,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     maxHeight: 400,
   },
-  meetingContext: {
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  meetingContextLabel: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  meetingContextName: {
-    fontSize: 14,
-    fontWeight: "600" as const,
-    color: Colors.text,
-  },
   taskInputContainer: {
-    marginBottom: 16,
+    marginTop: 20,
+    marginBottom: 20,
   },
   taskTitleInput: {
     backgroundColor: Colors.surface,
@@ -2292,7 +2269,8 @@ const styles = StyleSheet.create({
   },
   addTaskFooter: {
     paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingTop: 16,
+    marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
