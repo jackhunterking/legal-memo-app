@@ -324,7 +324,7 @@ const getReminderDate = (deadline: Date | null, option: ReminderOption): Date | 
   }
 };
 
-const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task }: any) => {
+const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task, onDelete }: any) => {
   const [taskTitle, setTaskTitle] = useState("");
   const [selectedDeadline, setSelectedDeadline] = useState<DeadlineOption>('none');
   const [customDeadline, setCustomDeadline] = useState<Date | null>(null);
@@ -722,6 +722,17 @@ const EditTaskSheet = ({ visible, onClose, onUpdate, isUpdating, task }: any) =>
             )}
 
             <View style={{ height: 20 }} />
+
+            <Pressable
+              style={styles.deleteTaskButton}
+              onPress={() => {
+                handleClose();
+                setTimeout(() => onDelete(task.id), 300);
+              }}
+            >
+              <Trash2 size={18} color={Colors.error} />
+              <Text style={styles.deleteTaskButtonText}>Delete Task</Text>
+            </Pressable>
           </ScrollView>
 
           {Platform.OS !== 'web' && showDatePicker && customDeadline && (
@@ -1329,6 +1340,9 @@ export default function MeetingDetailScreen() {
   const [editingTask, setEditingTask] = useState<MeetingTask | null>(null);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showMeetingTypeDropdown, setShowMeetingTypeDropdown] = useState(false);
+  const [showTimeEditor, setShowTimeEditor] = useState(false);
+  const [editingTimeHours, setEditingTimeHours] = useState('');
+  const [editingTimeMinutes, setEditingTimeMinutes] = useState('');
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -1799,7 +1813,19 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
         {/* Meeting Details Section */}
         <View style={styles.detailsSection}>
           {/* Time Logged */}
-          <View style={styles.detailRow}>
+          <Pressable
+            style={styles.detailRow}
+            onPress={() => {
+              const hours = Math.floor(meeting.duration_seconds / 3600);
+              const minutes = Math.floor((meeting.duration_seconds % 3600) / 60);
+              setEditingTimeHours(hours.toString());
+              setEditingTimeMinutes(minutes.toString());
+              setShowTimeEditor(true);
+              setShowContactDropdown(false);
+              setShowMeetingTypeDropdown(false);
+              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          >
             <View style={styles.detailIconWrapper}>
               <Clock size={20} color={Colors.accentLight} />
             </View>
@@ -1807,7 +1833,72 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
               <Text style={styles.detailLabel}>Time Logged</Text>
               <Text style={styles.detailValue}>{formatDuration(meeting.duration_seconds)}</Text>
             </View>
-          </View>
+            <Edit2 size={18} color={Colors.textMuted} />
+          </Pressable>
+
+          {showTimeEditor && (
+            <View style={styles.timeEditorContainer}>
+              <Text style={styles.timeEditorLabel}>Edit Time Logged</Text>
+              <View style={styles.timeEditorInputRow}>
+                <View style={styles.timeEditorInputGroup}>
+                  <TextInput
+                    style={styles.timeEditorInput}
+                    value={editingTimeHours}
+                    onChangeText={setEditingTimeHours}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.textMuted}
+                    maxLength={3}
+                  />
+                  <Text style={styles.timeEditorUnit}>hours</Text>
+                </View>
+                <View style={styles.timeEditorInputGroup}>
+                  <TextInput
+                    style={styles.timeEditorInput}
+                    value={editingTimeMinutes}
+                    onChangeText={setEditingTimeMinutes}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.textMuted}
+                    maxLength={2}
+                  />
+                  <Text style={styles.timeEditorUnit}>min</Text>
+                </View>
+              </View>
+              <View style={styles.timeEditorActions}>
+                <Pressable
+                  style={styles.timeEditorCancelButton}
+                  onPress={() => {
+                    setShowTimeEditor(false);
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Text style={styles.timeEditorCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.timeEditorSaveButton}
+                  onPress={async () => {
+                    const hours = parseInt(editingTimeHours) || 0;
+                    const minutes = parseInt(editingTimeMinutes) || 0;
+                    const newDurationSeconds = hours * 3600 + minutes * 60;
+                    
+                    if (newDurationSeconds > 0 && id) {
+                      await updateMeetingDetails(id, { 
+                        duration_seconds: newDurationSeconds,
+                        billable_seconds: meeting.billable ? newDurationSeconds : meeting.billable_seconds
+                      });
+                      setShowTimeEditor(false);
+                      if (Platform.OS !== 'web') {
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                      }
+                    }
+                  }}
+                >
+                  <Text style={styles.timeEditorSaveText}>Save</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
 
           {/* Contact Selector */}
           <Pressable
@@ -2045,25 +2136,17 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
                   )}
                 </View>
                 {!action.isAIGenerated && (
-                  <View style={styles.actionButtons}>
-                    <Pressable
-                      style={styles.actionEditButton}
-                      onPress={() => {
-                        setEditingTask(action.rawTask);
-                        if (Platform.OS !== 'web') {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }
-                      }}
-                    >
-                      <Edit2 size={16} color={Colors.accentLight} />
-                    </Pressable>
-                    <Pressable
-                      style={styles.actionDeleteButton}
-                      onPress={() => handleDeleteTask(action.id)}
-                    >
-                      <Trash2 size={16} color={Colors.error} />
-                    </Pressable>
-                  </View>
+                  <Pressable
+                    style={styles.actionEditButtonNew}
+                    onPress={() => {
+                      setEditingTask(action.rawTask);
+                      if (Platform.OS !== 'web') {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                  >
+                    <Text style={styles.actionEditButtonText}>Edit</Text>
+                  </Pressable>
                 )}
               </View>
             ))
@@ -2253,6 +2336,7 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
         }}
         isUpdating={isUpdating}
         task={editingTask}
+        onDelete={handleDeleteTask}
       />
     </SafeAreaView>
   );
@@ -3103,5 +3187,106 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textMuted,
     marginTop: 2,
+  },
+  timeEditorContainer: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  timeEditorLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  timeEditorInputRow: {
+    flexDirection: 'row' as const,
+    gap: 16,
+    marginBottom: 16,
+  },
+  timeEditorInputGroup: {
+    flex: 1,
+  },
+  timeEditorInput: {
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 18,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    textAlign: 'center' as const,
+    marginBottom: 6,
+  },
+  timeEditorUnit: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    textAlign: 'center' as const,
+  },
+  timeEditorActions: {
+    flexDirection: 'row' as const,
+    gap: 12,
+  },
+  timeEditorCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center' as const,
+  },
+  timeEditorCancelText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  timeEditorSaveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    backgroundColor: Colors.accentLight,
+    borderRadius: 8,
+    alignItems: 'center' as const,
+  },
+  timeEditorSaveText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.background,
+  },
+  actionEditButtonNew: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  actionEditButtonText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.accentLight,
+  },
+  deleteTaskButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 8,
+    paddingVertical: 14,
+    backgroundColor: `${Colors.error}15`,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.error,
+    marginTop: 12,
+  },
+  deleteTaskButtonText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.error,
   },
 });
