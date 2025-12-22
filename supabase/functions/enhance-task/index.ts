@@ -71,10 +71,15 @@ Deno.serve(async (req: Request) => {
 
     // Extract participants from AI output
     const participants =
-      (meeting.ai_output as { meeting_overview?: { participants?: Array<{ name?: string }> } })?.meeting_overview?.participants || [];
+      (meeting.ai_output as { meeting_overview?: { participants?: Array<{ name?: string; label?: string }> } })?.meeting_overview?.participants || [];
     const participantNames = participants
       .filter((p: { name?: string }) => p.name && p.name !== "Unknown")
       .map((p: { name?: string }) => p.name);
+    
+    // Also get participant labels for role-based assignment
+    const participantLabels = participants
+      .map((p: { label?: string; name?: string }) => ({ label: p.label, name: p.name }))
+      .filter((p: { label?: string }) => p.label && p.label !== "UNKNOWN");
 
     // Extract summary context
     const summaryContext =
@@ -95,10 +100,6 @@ Deno.serve(async (req: Request) => {
     );
     console.log(`[EnhanceTask] Context: ${summaryContext}`);
 
-    // Use OpenAI via Deno KV or direct API call to suggest owner and deadline
-    // For now, we'll use a simple heuristic approach
-    // In production, you'd integrate with OpenAI API here
-
     const openAiApiKey = Deno.env.get("OPENAI_API_KEY");
 
     let enhancedTask: EnhanceTaskResponse = {
@@ -113,7 +114,7 @@ Deno.serve(async (req: Request) => {
 
 Meeting Context:
 Summary: ${summaryContext}
-Participants: ${participantNames.join(", ") || "Not specified"}
+Participants: ${participantLabels.map((p: { label?: string; name?: string }) => `${p.label}${p.name ? ` (${p.name})` : ''}`).join(", ") || "Not specified"}
 
 Existing Action Items:
 ${actionsContext || "None"}
@@ -122,20 +123,25 @@ New Task:
 "${task_title}"
 
 Based on the task description and meeting context, suggest:
-1. Owner: Which participant (if any) should own this task? Return their exact name from the participants list, or null if unclear.
+1. Owner: Who should own this task? 
+   - If task involves legal work (drafting, filing, research), assign to LAWYER
+   - If task involves providing info/documents, assign to CLIENT
+   - Return the participant name if known, otherwise return the role (LAWYER/CLIENT)
+   - Return null if truly unclear
 2. Deadline: When should this task be completed? Return an ISO date string (YYYY-MM-DD) or null if no clear timeframe.
 
 Respond in JSON format:
 {
-  "owner": "Participant Name or null",
+  "owner": "Name or Role or null",
   "suggested_deadline": "YYYY-MM-DD or null",
   "reasoning": "Brief explanation"
 }
 
 Important:
-- Only suggest an owner if a participant is explicitly mentioned or clearly implied
+- Legal tasks typically belong to LAWYER
+- Information gathering tasks typically belong to CLIENT
 - Only suggest a deadline if a timeframe is mentioned in the task
-- Be conservative - prefer null over guessing`;
+- Use smart defaults based on task type if deadline not specified`;
 
         const openaiResponse = await fetch(
           "https://api.openai.com/v1/chat/completions",
@@ -189,13 +195,28 @@ Important:
     }
 
     // Fallback heuristics if AI not available or failed
-    if (!enhancedTask.owner && participantNames.length > 0) {
-      // Check if task mentions any participant by name
+    if (!enhancedTask.owner) {
       const taskLower = task_title.toLowerCase();
+      
+      // Check if task mentions any participant by name
       for (const name of participantNames) {
         if (name && taskLower.includes(name.toLowerCase())) {
           enhancedTask.owner = name;
           break;
+        }
+      }
+      
+      // If no name match, try role-based assignment
+      if (!enhancedTask.owner) {
+        const lawyerKeywords = ['draft', 'file', 'motion', 'research', 'review contract', 'prepare', 'court', 'legal', 'negotiate'];
+        const clientKeywords = ['provide', 'gather', 'collect', 'bring', 'sign', 'decide', 'information', 'documents'];
+        
+        if (lawyerKeywords.some(kw => taskLower.includes(kw))) {
+          const lawyer = participantLabels.find((p: { label?: string }) => p.label === 'LAWYER');
+          enhancedTask.owner = lawyer?.name || 'LAWYER';
+        } else if (clientKeywords.some(kw => taskLower.includes(kw))) {
+          const client = participantLabels.find((p: { label?: string }) => p.label === 'CLIENT');
+          enhancedTask.owner = client?.name || 'CLIENT';
         }
       }
     }
