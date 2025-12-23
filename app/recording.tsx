@@ -36,6 +36,9 @@ export default function RecordingScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const permissionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasInitiatedRef = useRef(false);
   const [startedAt, setStartedAt] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -57,11 +60,37 @@ export default function RecordingScreen() {
   }, [audioRecorder]);
 
   const requestPermission = useCallback(async () => {
+    if (isRequestingPermission) return false;
+    
+    setIsRequestingPermission(true);
+    
+    // Clear any existing timeout
+    if (permissionTimeoutRef.current) {
+      clearTimeout(permissionTimeoutRef.current);
+    }
+    
+    // Set a timeout in case permission request hangs
+    permissionTimeoutRef.current = setTimeout(() => {
+      console.log("[Recording] Permission request timed out");
+      setIsRequestingPermission(false);
+      setHasPermission(false);
+      setPermissionDenied(true);
+    }, 10000);
+    
     try {
       console.log("[Recording] Requesting microphone permission...");
-      const { granted, canAskAgain } = await requestRecordingPermissionsAsync();
-      console.log("[Recording] Permission granted:", granted, "canAskAgain:", canAskAgain);
+      const result = await requestRecordingPermissionsAsync();
       
+      // Clear timeout since we got a response
+      if (permissionTimeoutRef.current) {
+        clearTimeout(permissionTimeoutRef.current);
+        permissionTimeoutRef.current = null;
+      }
+      
+      const { granted, canAskAgain } = result;
+      console.log("[Recording] Permission result - granted:", granted, "canAskAgain:", canAskAgain);
+      
+      setIsRequestingPermission(false);
       setHasPermission(granted);
       setPermissionDenied(!granted);
 
@@ -70,33 +99,36 @@ export default function RecordingScreen() {
           playsInSilentMode: true,
           allowsRecording: true,
         });
-      } else if (!canAskAgain && Platform.OS !== 'web') {
-        Alert.alert(
-          "Permission Required",
-          "Microphone permission is required to record meetings. Please enable it in your device settings.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Open Settings", onPress: () => {
-              if (Platform.OS === 'ios') {
-                import('expo-linking').then(Linking => Linking.openSettings());
-              } else {
-                import('expo-linking').then(Linking => Linking.openSettings());
-              }
-            }}
-          ]
-        );
       }
       
       return granted;
     } catch (err) {
       console.error("[Recording] Permission request error:", err);
+      
+      // Clear timeout
+      if (permissionTimeoutRef.current) {
+        clearTimeout(permissionTimeoutRef.current);
+        permissionTimeoutRef.current = null;
+      }
+      
+      setIsRequestingPermission(false);
+      setHasPermission(false);
       setPermissionDenied(true);
       return false;
     }
-  }, []);
+  }, [isRequestingPermission]);
 
   useEffect(() => {
-    requestPermission();
+    if (!hasInitiatedRef.current) {
+      hasInitiatedRef.current = true;
+      requestPermission();
+    }
+    
+    return () => {
+      if (permissionTimeoutRef.current) {
+        clearTimeout(permissionTimeoutRef.current);
+      }
+    };
   }, [requestPermission]);
 
   useEffect(() => {
@@ -286,8 +318,27 @@ export default function RecordingScreen() {
           </View>
           <Text style={styles.permissionTitle}>Microphone Access</Text>
           <Text style={styles.permissionText}>
-            Requesting microphone permission...
+            {isRequestingPermission 
+              ? "Requesting microphone permission..." 
+              : "Tap below to request microphone access"}
           </Text>
+          {!isRequestingPermission && (
+            <Pressable 
+              style={styles.permissionButton} 
+              onPress={requestPermission}
+            >
+              <Text style={styles.permissionButtonText}>Request Permission</Text>
+            </Pressable>
+          )}
+          {Platform.OS !== 'web' && (
+            <Pressable 
+              style={styles.settingsButton} 
+              onPress={() => Linking.openSettings()}
+            >
+              <Settings size={18} color={Colors.accent} />
+              <Text style={styles.settingsButtonText}>Open Settings</Text>
+            </Pressable>
+          )}
           <Pressable 
             style={styles.secondaryButton} 
             onPress={() => router.back()}
