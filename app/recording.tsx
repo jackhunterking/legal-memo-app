@@ -30,7 +30,6 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic, Wifi, WifiOff } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import * as FileSystem from "expo-file-system";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";

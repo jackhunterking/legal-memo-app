@@ -22,7 +22,7 @@ import {
   AudioModule,
   setAudioModeAsync,
 } from "expo-audio";
-import * as FileSystem from "expo-file-system";
+import { File } from "expo-file-system";
 import { supabase } from "@/lib/supabase";
 import {
   SPEECH_RECORDING_OPTIONS,
@@ -268,6 +268,7 @@ export function useChunkedRecording(
 
   /**
    * Record a single chunk and process it
+   * Uses new expo-file-system File API for reading audio data
    */
   const recordAndProcessChunk = useCallback(async (): Promise<void> => {
     if (!meetingIdRef.current || !isRecordingLoopActive.current || isPausedRef.current) {
@@ -280,7 +281,13 @@ export function useChunkedRecording(
     try {
       // Prepare to record
       console.log(`[useChunkedRecording] Starting chunk ${currentChunkIndex}...`);
-      await audioRecorder.prepareToRecordAsync();
+      
+      try {
+        await audioRecorder.prepareToRecordAsync();
+      } catch (prepareErr) {
+        // The recorder might already be prepared from a previous iteration
+        console.warn("[useChunkedRecording] Prepare warning (may be already prepared):", prepareErr);
+      }
       
       // Start recording
       audioRecorder.record();
@@ -290,42 +297,77 @@ export function useChunkedRecording(
         chunkTimeoutRef.current = setTimeout(resolve, CHUNK_DURATION_MS);
       });
 
+      // Check if we're still supposed to be recording
+      if (!isRecordingLoopActive.current || isPausedRef.current) {
+        console.log("[useChunkedRecording] Recording loop stopped during chunk");
+        try {
+          await audioRecorder.stop();
+        } catch {
+          // Ignore stop errors
+        }
+        return;
+      }
+
       // Stop recording - file available at audioRecorder.uri
       await audioRecorder.stop();
       const uri = audioRecorder.uri;
 
       if (!uri) {
         console.warn("[useChunkedRecording] No recording URI");
+        setIsProcessingChunk(false);
+        // Continue to next chunk anyway
+        if (isRecordingLoopActive.current && !isPausedRef.current) {
+          setTimeout(() => recordAndProcessChunk(), 100);
+        }
         return;
       }
 
-      // Read file as base64
-      const audioBase64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: "base64",
-      });
-
-      // Delete temp file
+      // Read file as base64 using new expo-file-system File API
+      let audioBase64: string;
       try {
-        await FileSystem.deleteAsync(uri, { idempotent: true });
+        const audioFile = new File(uri);
+        audioBase64 = await audioFile.base64();
+      } catch (readErr) {
+        console.error("[useChunkedRecording] Error reading audio file:", readErr);
+        setIsProcessingChunk(false);
+        // Try next chunk
+        if (isRecordingLoopActive.current && !isPausedRef.current) {
+          setTimeout(() => recordAndProcessChunk(), 100);
+        }
+        return;
+      }
+
+      // Delete temp file using new expo-file-system File API
+      try {
+        const audioFile = new File(uri);
+        if (audioFile.exists) {
+          audioFile.delete();
+        }
       } catch {
         // Ignore deletion errors
       }
 
       // Process chunk
       if (meetingIdRef.current && isRecordingLoopActive.current) {
-        const result = await processChunk(meetingIdRef.current, audioBase64, currentChunkIndex);
-        
-        // Notify callback
-        if (onChunkProcessed) {
-          onChunkProcessed(result);
-        }
+        try {
+          const result = await processChunk(meetingIdRef.current, audioBase64, currentChunkIndex);
+          
+          // Notify callback
+          if (onChunkProcessed) {
+            onChunkProcessed(result);
+          }
 
-        setChunkIndex((prev) => prev + 1);
-        setTotalChunksProcessed((prev) => prev + 1);
+          setChunkIndex((prev) => prev + 1);
+          setTotalChunksProcessed((prev) => prev + 1);
+        } catch (processErr) {
+          console.error("[useChunkedRecording] Error processing chunk:", processErr);
+          // Continue to next chunk even if this one failed
+          setChunkIndex((prev) => prev + 1);
+        }
       }
     } catch (err) {
       console.error("[useChunkedRecording] Chunk recording error:", err);
-      setError(err instanceof Error ? err.message : "Recording error");
+      // Don't set global error state for individual chunk failures - just log and continue
     } finally {
       setIsProcessingChunk(false);
     }
