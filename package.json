@@ -51,7 +51,8 @@
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
     "zod": "^4.2.1",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.2",
+    "@rork-ai/toolkit-sdk": "0.2.51"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

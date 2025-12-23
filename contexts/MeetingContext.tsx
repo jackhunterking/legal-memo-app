@@ -190,19 +190,37 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     mutationFn: async (meetingId: string) => {
       console.log('[MeetingContext] Triggering AI processing for meeting:', meetingId);
       
-      const { data, error } = await supabase.functions.invoke('process-meeting', {
-        body: { meeting_id: meetingId },
-      });
-      
-      if (error) {
-        console.error('[MeetingContext] Error triggering processing:', error);
-        // Don't throw - the processing may still work via database trigger
-        // Just log and continue
-      } else {
+      try {
+        const { data, error } = await supabase.functions.invoke('process-meeting', {
+          body: { meeting_id: meetingId },
+        });
+        
+        if (error) {
+          // Try to get more details from the error
+          let errorMessage = 'Edge Function error';
+          if ('context' in error && error.context) {
+            try {
+              const ctx = error.context as Response;
+              const errorBody = await ctx.json();
+              errorMessage = errorBody?.error || errorBody?.message || errorMessage;
+              console.error('[MeetingContext] Edge Function error details:', errorBody);
+            } catch {
+              console.error('[MeetingContext] Could not parse error context');
+            }
+          }
+          console.error('[MeetingContext] Error triggering processing:', errorMessage);
+          // Don't throw - the meeting status will reflect the error from the Edge Function
+          // The Edge Function updates the meeting status to 'failed' with error_message on error
+          return { error: errorMessage };
+        }
+        
         console.log('[MeetingContext] Processing triggered successfully:', data);
+        return data;
+      } catch (err) {
+        console.error('[MeetingContext] Failed to invoke Edge Function:', err);
+        // Network error or function not deployed - don't throw, let UI handle gracefully
+        return { error: 'Processing service unavailable. Please check Edge Function deployment.' };
       }
-      
-      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
