@@ -159,6 +159,13 @@ export function useChunkedRecording(
   const startStreamingSession = useCallback(async (meetingId: string): Promise<string> => {
     console.log("[useChunkedRecording] Starting streaming session...");
     
+    // Check if we have an active session before calling the function
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      throw new Error("No active session. Please log in again.");
+    }
+    console.log("[useChunkedRecording] Auth session active, user:", session.user.id);
+    
     const { data, error: fnError } = await supabase.functions.invoke(
       "streaming-transcribe",
       { 
@@ -171,12 +178,22 @@ export function useChunkedRecording(
 
     if (fnError) {
       console.error("[useChunkedRecording] Function error details:", fnError);
-      throw new Error(`Failed to start session: ${fnError.message}`);
+      // Try to parse the error body for more details
+      let errorMessage = fnError.message || "Unknown error";
+      if (fnError.context?.body) {
+        try {
+          const errorBody = JSON.parse(fnError.context.body);
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Use default message
+        }
+      }
+      throw new Error(`Failed to start session: ${errorMessage}`);
     }
 
     if (!data?.session_id) {
       console.error("[useChunkedRecording] Response data:", data);
-      throw new Error("No session_id returned from Edge Function");
+      throw new Error(data?.error || "No session_id returned from Edge Function");
     }
 
     console.log(`[useChunkedRecording] Session started: ${data.session_id}`);

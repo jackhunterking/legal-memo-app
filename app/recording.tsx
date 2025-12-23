@@ -112,6 +112,13 @@ export default function RecordingScreen() {
     const initializeRecording = async () => {
       try {
         console.log("[Recording] Initializing...");
+        
+        // Verify user is authenticated
+        if (!user?.id) {
+          throw new Error("Please log in to start recording");
+        }
+        console.log("[Recording] User authenticated:", user.id);
+        
         setRecordedAt(new Date().toISOString());
         
         // Start recording session
@@ -121,18 +128,22 @@ export default function RecordingScreen() {
       } catch (err) {
         console.error("[Recording] Init error:", err);
         
+        const errorMessage = err instanceof Error ? err.message : "Failed to initialize recording";
+        
         if (Platform.OS !== "web") {
           Alert.alert(
             "Recording Error",
-            err instanceof Error ? err.message : "Failed to initialize recording"
+            errorMessage,
+            [{ text: "OK", onPress: () => router.back() }]
           );
+        } else {
+          router.back();
         }
-        router.back();
       }
     };
 
     initializeRecording();
-  }, [meetingId, startSession, router]);
+  }, [meetingId, user, startSession, router]);
 
   // Pulse animation
   useEffect(() => {
