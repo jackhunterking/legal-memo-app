@@ -10,15 +10,12 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Pause, Play, Square, Mic, ChevronLeft, Settings } from "lucide-react-native";
-import * as Linking from "expo-linking";
+import { Pause, Play, Square, Mic, ChevronLeft } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import {
   useAudioRecorder,
   RecordingPresets,
   useAudioRecorderState,
-  getRecordingPermissionsAsync,
-  requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from "expo-audio";
 import { useMeetings } from "@/contexts/MeetingContext";
@@ -35,12 +32,8 @@ export default function RecordingScreen() {
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [permissionDenied, setPermissionDenied] = useState(false);
-  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
-  const permissionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasInitiatedRef = useRef(false);
   const [startedAt, setStartedAt] = useState<string | null>(null);
+  const hasStartedRecording = useRef(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -49,7 +42,16 @@ export default function RecordingScreen() {
   const recorderState = useAudioRecorderState(audioRecorder);
 
   const startRecording = useCallback(async () => {
+    if (hasStartedRecording.current) return;
+    hasStartedRecording.current = true;
+
     try {
+      console.log("[Recording] Setting audio mode...");
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+      
       console.log("[Recording] Starting recording...");
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
@@ -57,117 +59,16 @@ export default function RecordingScreen() {
       console.log("[Recording] Recording started");
     } catch (err) {
       console.error("[Recording] Start error:", err);
-    }
-  }, [audioRecorder]);
-
-  const checkAndRequestPermission = useCallback(async () => {
-    if (isRequestingPermission) {
-      return false;
-    }
-    
-    setIsRequestingPermission(true);
-    
-    // Clear any existing timeout
-    if (permissionTimeoutRef.current) {
-      clearTimeout(permissionTimeoutRef.current);
-    }
-    
-    try {
-      // First check current permission status
-      console.log("[Recording] Checking current permission status...");
-      const currentStatus = await getRecordingPermissionsAsync();
-      console.log("[Recording] Current status - granted:", currentStatus.granted, "status:", currentStatus.status);
-      
-      if (currentStatus.granted) {
-        // Permission already granted, no need to request
-        console.log("[Recording] Permission already granted, proceeding...");
-        setIsRequestingPermission(false);
-        setHasPermission(true);
-        setPermissionDenied(false);
-        
-        try {
-          await setAudioModeAsync({
-            playsInSilentMode: true,
-            allowsRecording: true,
-          });
-        } catch (audioModeErr) {
-          console.error("[Recording] setAudioModeAsync error:", audioModeErr);
-        }
-        
-        return true;
+      if (Platform.OS !== "web") {
+        Alert.alert("Error", "Failed to start recording. Please try again.");
       }
-      
-      // Permission not granted, need to request
-      // Set a timeout in case permission request hangs
-      permissionTimeoutRef.current = setTimeout(() => {
-        console.log("[Recording] Permission request timed out");
-        setIsRequestingPermission(false);
-        setHasPermission(false);
-        setPermissionDenied(true);
-      }, 10000);
-      
-      console.log("[Recording] Requesting microphone permission...");
-      const result = await requestRecordingPermissionsAsync();
-      
-      // Clear timeout since we got a response
-      if (permissionTimeoutRef.current) {
-        clearTimeout(permissionTimeoutRef.current);
-        permissionTimeoutRef.current = null;
-      }
-      
-      const { granted, canAskAgain } = result;
-      console.log("[Recording] Permission result - granted:", granted, "canAskAgain:", canAskAgain);
-      
-      setIsRequestingPermission(false);
-      setHasPermission(granted);
-      setPermissionDenied(!granted);
-
-      if (granted) {
-        try {
-          await setAudioModeAsync({
-            playsInSilentMode: true,
-            allowsRecording: true,
-          });
-        } catch (audioModeErr) {
-          console.error("[Recording] setAudioModeAsync error:", audioModeErr);
-        }
-      }
-      
-      return granted;
-    } catch (err) {
-      console.error("[Recording] Permission error:", err);
-      
-      // Clear timeout
-      if (permissionTimeoutRef.current) {
-        clearTimeout(permissionTimeoutRef.current);
-        permissionTimeoutRef.current = null;
-      }
-      
-      setIsRequestingPermission(false);
-      setHasPermission(false);
-      setPermissionDenied(true);
-      return false;
+      router.back();
     }
-  }, [isRequestingPermission]);
+  }, [audioRecorder, router]);
 
   useEffect(() => {
-    if (!hasInitiatedRef.current) {
-      hasInitiatedRef.current = true;
-      checkAndRequestPermission();
-    }
-    
-    return () => {
-      if (permissionTimeoutRef.current) {
-        clearTimeout(permissionTimeoutRef.current);
-      }
-    };
-  }, [checkAndRequestPermission]);
-
-  useEffect(() => {
-    if (hasPermission && !recorderState.isRecording && !startedAt) {
-      startRecording();
-    }
-  }, [hasPermission, recorderState.isRecording, startedAt, startRecording]);
+    startRecording();
+  }, [startRecording]);
 
   useEffect(() => {
     if (recorderState.isRecording && !isPaused) {
@@ -336,94 +237,6 @@ export default function RecordingScreen() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  if (hasPermission === null) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <ChevronLeft size={28} color={Colors.text} />
-          </Pressable>
-        </View>
-        <View style={styles.permissionContainer}>
-          <View style={styles.permissionIconContainer}>
-            <Mic size={48} color={Colors.accent} />
-          </View>
-          <Text style={styles.permissionTitle}>Microphone Access</Text>
-          <Text style={styles.permissionText}>
-            {isRequestingPermission 
-              ? "Requesting microphone permission..." 
-              : "Tap below to request microphone access"}
-          </Text>
-          {!isRequestingPermission && (
-            <Pressable 
-              style={styles.permissionButton} 
-              onPress={checkAndRequestPermission}
-            >
-              <Text style={styles.permissionButtonText}>Request Permission</Text>
-            </Pressable>
-          )}
-          {Platform.OS !== 'web' && (
-            <Pressable 
-              style={styles.settingsButton} 
-              onPress={() => Linking.openSettings()}
-            >
-              <Settings size={18} color={Colors.accent} />
-              <Text style={styles.settingsButtonText}>Open Settings</Text>
-            </Pressable>
-          )}
-          <Pressable 
-            style={styles.secondaryButton} 
-            onPress={() => router.back()}
-          >
-            <Text style={styles.secondaryButtonText}>Go Back</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (!hasPermission || permissionDenied) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <ChevronLeft size={28} color={Colors.text} />
-          </Pressable>
-        </View>
-        <View style={styles.permissionContainer}>
-          <View style={styles.permissionIconContainer}>
-            <Mic size={48} color={Colors.accent} />
-          </View>
-          <Text style={styles.permissionTitle}>Microphone Access Required</Text>
-          <Text style={styles.permissionText}>
-            To record meetings, please grant microphone permission.
-          </Text>
-          <Pressable 
-            style={styles.permissionButton} 
-            onPress={checkAndRequestPermission}
-          >
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
-          </Pressable>
-          {Platform.OS !== 'web' && (
-            <Pressable 
-              style={styles.settingsButton} 
-              onPress={() => Linking.openSettings()}
-            >
-              <Settings size={18} color={Colors.accent} />
-              <Text style={styles.settingsButtonText}>Open Settings</Text>
-            </Pressable>
-          )}
-          <Pressable 
-            style={styles.secondaryButton} 
-            onPress={() => router.back()}
-          >
-            <Text style={styles.secondaryButtonText}>Go Back</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
@@ -488,86 +301,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 32,
-  },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 32,
-  },
-  permissionIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: Colors.surfaceLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 24,
-  },
-  permissionTitle: {
-    fontSize: 22,
-    fontWeight: "700" as const,
-    color: Colors.text,
-    textAlign: "center",
-    marginBottom: 12,
-  },
-  permissionText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    textAlign: "center",
-    marginBottom: 32,
-    lineHeight: 24,
-    paddingHorizontal: 16,
-  },
-  permissionButton: {
-    backgroundColor: Colors.accent,
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  permissionButtonText: {
-    fontSize: 17,
-    fontWeight: "600" as const,
-    color: Colors.text,
-  },
-  secondaryButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Colors.surfaceLight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  settingsButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.accent,
-    marginBottom: 12,
-  },
-  settingsButtonText: {
-    fontSize: 16,
-    fontWeight: "500" as const,
-    color: Colors.accent,
   },
   recordingIndicator: {
     marginBottom: 40,
