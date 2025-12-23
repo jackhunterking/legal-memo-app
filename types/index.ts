@@ -164,7 +164,6 @@ export interface MeetingJob {
 export interface MeetingWithDetails extends Meeting {
   ai_output?: AIOutput;
   transcript_segments?: TranscriptSegment[];
-  tasks?: MeetingTask[];
 }
 
 // Default meeting type names (for reference)
@@ -194,23 +193,3 @@ export interface Contact {
 }
 
 export const CONTACT_ROLES: ContactRole[] = ['CLIENT', 'LAWYER', 'OTHER'];
-
-export type TaskPriority = 'low' | 'medium' | 'high';
-
-export interface MeetingTask {
-  id: string;
-  meeting_id: string;
-  user_id: string;
-  title: string;
-  description: string | null;
-  priority: TaskPriority;
-  completed: boolean;
-  deadline: string | null;
-  reminder_time: string | null;
-  notification_id: string | null;
-  owner: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export const TASK_PRIORITIES: TaskPriority[] = ['low', 'medium', 'high'];

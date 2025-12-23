@@ -8,7 +8,6 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import { MeetingTypeProvider } from "@/contexts/MeetingTypeContext";
 import { ContactProvider } from "@/contexts/ContactContext";
-import { TaskProvider } from "@/contexts/TaskContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -54,10 +53,8 @@ export default function RootLayout() {
           <MeetingTypeProvider>
             <MeetingProvider>
               <ContactProvider>
-                <TaskProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
-                </TaskProvider>
+                <StatusBar style="light" />
+                <RootLayoutNav />
               </ContactProvider>
             </MeetingProvider>
           </MeetingTypeProvider>

@@ -22,39 +22,27 @@ import {
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
-import { processMeeting, ProcessingStep } from "@/lib/meetingProcessor";
 import Colors from "@/constants/colors";
 
+// Processing steps - server-side processing, we just show progress
 const STEPS = [
   { key: "uploading", label: "Uploading", icon: Upload },
   { key: "transcribing", label: "Transcribing", icon: FileText },
-  { key: "summarizing", label: "Summarizing", icon: Brain },
-  { key: "actions", label: "Extracting Actions", icon: ListChecks },
-  { key: "indexing", label: "Indexing", icon: Search },
+  { key: "summarizing", label: "Analyzing", icon: Brain },
+  { key: "actions", label: "Extracting Tasks", icon: ListChecks },
+  { key: "indexing", label: "Finalizing", icon: Search },
 ];
-
-const STEP_TO_INDEX: Record<ProcessingStep, number> = {
-  uploading: 0,
-  transcribing: 1,
-  summarizing: 2,
-  actions: 3,
-  indexing: 4,
-  complete: 5,
-};
 
 export default function ProcessingScreen() {
   const router = useRouter();
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
   const { data: meeting, refetch } = useMeetingDetails(meetingId || null);
-  const { retryProcessing } = useMeetings();
+  const { retryProcessing, triggerProcessing } = useMeetings();
 
   const spinAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const dotAnim = useRef(new Animated.Value(0)).current;
-  const [currentStep, setCurrentStep] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processingError, setProcessingError] = useState<string | null>(null);
-  const processingStartedRef = useRef(false);
+  const [estimatedStep, setEstimatedStep] = useState(0);
+  const processingTriggeredRef = useRef(false);
 
   // Continuous spinner animation
   useEffect(() => {
@@ -92,68 +80,49 @@ export default function ProcessingScreen() {
     return () => pulse.stop();
   }, [pulseAnim]);
 
-  // Animated dots for "processing" text
+  // Trigger processing when screen loads (if meeting is in processing state)
   useEffect(() => {
-    const dots = Animated.loop(
-      Animated.timing(dotAnim, {
-        toValue: 3,
-        duration: 1500,
-        easing: Easing.linear,
-        useNativeDriver: false,
-      })
-    );
-    dots.start();
-    return () => dots.stop();
-  }, [dotAnim]);
-
-  // Start actual processing when meeting is in processing state
-  useEffect(() => {
-    const startProcessing = async () => {
+    const triggerIfNeeded = async () => {
       if (
         meeting?.status === 'processing' &&
         meeting?.audio_path &&
-        !isProcessing &&
-        !processingStartedRef.current
+        !processingTriggeredRef.current
       ) {
-        processingStartedRef.current = true;
-        setIsProcessing(true);
-        setProcessingError(null);
-        console.log('[Processing] Starting real processing for:', meetingId);
-
+        processingTriggeredRef.current = true;
+        console.log('[Processing] Triggering server-side processing for:', meetingId);
+        
         try {
-          const success = await processMeeting(
-            meeting.id,
-            meeting.audio_path,
-            (progress) => {
-              console.log('[Processing] Progress:', progress.step);
-              setCurrentStep(STEP_TO_INDEX[progress.step]);
-              if (progress.error) {
-                setProcessingError(progress.error);
-              }
-            }
-          );
-
-          if (success) {
-            console.log('[Processing] Completed successfully');
-            setCurrentStep(STEPS.length);
-            await refetch();
-          }
+          await triggerProcessing(meeting.id);
         } catch (err) {
-          console.error('[Processing] Error:', err);
-          setProcessingError(err instanceof Error ? err.message : 'Processing failed');
-        } finally {
-          setIsProcessing(false);
+          console.error('[Processing] Failed to trigger processing:', err);
+          // Processing will continue in background even if trigger call fails
         }
-      } else if (meeting?.status === 'ready') {
-        setCurrentStep(STEPS.length);
-      } else if (meeting?.status === 'failed') {
-        setProcessingError(meeting.error_message || 'Processing failed');
       }
     };
 
-    startProcessing();
-  }, [meeting?.status, meeting?.audio_path, meeting?.id, meeting?.error_message, meetingId, isProcessing, refetch]);
+    triggerIfNeeded();
+  }, [meeting?.status, meeting?.audio_path, meeting?.id, meetingId, triggerProcessing]);
 
+  // Simulate progress through steps while processing (for UI feedback)
+  useEffect(() => {
+    if (meeting?.status === 'processing') {
+      const interval = setInterval(() => {
+        setEstimatedStep(prev => {
+          // Slowly progress through steps, but don't complete until status changes
+          if (prev < STEPS.length - 1) {
+            return prev + 1;
+          }
+          return prev;
+        });
+      }, 15000); // Move to next step every 15 seconds
+
+      return () => clearInterval(interval);
+    } else if (meeting?.status === 'ready') {
+      setEstimatedStep(STEPS.length);
+    }
+  }, [meeting?.status]);
+
+  // Navigate to meeting when ready
   useEffect(() => {
     if (meeting?.status === "ready") {
       setTimeout(() => {
@@ -172,9 +141,8 @@ export default function ProcessingScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    setCurrentStep(0);
-    setProcessingError(null);
-    processingStartedRef.current = false;
+    setEstimatedStep(0);
+    processingTriggeredRef.current = false;
 
     try {
       await retryProcessing(meetingId);
@@ -196,8 +164,8 @@ export default function ProcessingScreen() {
     outputRange: ["0deg", "360deg"],
   });
 
-  const stepIndex = meeting?.status === 'ready' ? STEPS.length : currentStep;
-  const isFailed = meeting?.status === "failed" || !!processingError;
+  const currentStep = meeting?.status === 'ready' ? STEPS.length : estimatedStep;
+  const isFailed = meeting?.status === "failed";
   const isComplete = meeting?.status === "ready";
 
   return (
@@ -255,14 +223,14 @@ export default function ProcessingScreen() {
             <Text style={styles.subtitle}>
               {isComplete
                 ? "Your meeting is ready to view"
-                : "This may take a few minutes"}
+                : "AI is transcribing and analyzing your meeting"}
             </Text>
 
             <View style={styles.steps}>
               {STEPS.map((step, index) => {
                 const Icon = step.icon;
-                const isActive = index === stepIndex;
-                const isDone = index < stepIndex;
+                const isActive = index === currentStep;
+                const isDone = index < currentStep;
 
                 return (
                   <View key={step.key} style={styles.step}>
@@ -296,6 +264,10 @@ export default function ProcessingScreen() {
                 );
               })}
             </View>
+
+            <Text style={styles.hint}>
+              Processing happens on our servers using AssemblyAI
+            </Text>
           </>
         )}
       </View>
@@ -356,6 +328,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.textSecondary,
     marginBottom: 48,
+    textAlign: "center",
+  },
+  hint: {
+    marginTop: 32,
+    fontSize: 13,
+    color: Colors.textMuted,
     textAlign: "center",
   },
   steps: {

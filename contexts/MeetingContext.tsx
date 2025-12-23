@@ -185,6 +185,31 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  // Trigger the process-meeting Edge Function
+  const triggerProcessingMutation = useMutation({
+    mutationFn: async (meetingId: string) => {
+      console.log('[MeetingContext] Triggering AI processing for meeting:', meetingId);
+      
+      const { data, error } = await supabase.functions.invoke('process-meeting', {
+        body: { meeting_id: meetingId },
+      });
+      
+      if (error) {
+        console.error('[MeetingContext] Error triggering processing:', error);
+        // Don't throw - the processing may still work via database trigger
+        // Just log and continue
+      } else {
+        console.log('[MeetingContext] Processing triggered successfully:', data);
+      }
+      
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meetings'] });
+      queryClient.invalidateQueries({ queryKey: ['meeting'] });
+    },
+  });
+
   const updateMeetingMutation = useMutation({
     mutationFn: async ({
       meetingId,
@@ -255,11 +280,13 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     mutationFn: async (meetingId: string) => {
       console.log('[MeetingContext] Retrying processing for:', meetingId);
       
+      // Update meeting status to processing
       await supabase
         .from('meetings')
         .update({ status: 'processing', error_message: null })
         .eq('id', meetingId);
       
+      // Reset job status
       const { error } = await supabase
         .from('meeting_jobs')
         .upsert({
@@ -274,9 +301,13 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
         console.error('[MeetingContext] Error retrying processing:', error.message || JSON.stringify(error));
         throw new Error(error.message || 'Failed to retry processing');
       }
+      
+      // Trigger the Edge Function
+      await triggerProcessingMutation.mutateAsync(meetingId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
+      queryClient.invalidateQueries({ queryKey: ['meeting'] });
     },
   });
 
@@ -328,6 +359,7 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     createInstantMeeting: createInstantMeetingMutation.mutateAsync,
     confirmConsent: confirmConsentMutation.mutateAsync,
     finalizeUpload: finalizeUploadMutation.mutateAsync,
+    triggerProcessing: triggerProcessingMutation.mutateAsync,
     updateMeeting: updateMeetingMutation.mutateAsync,
     updateMeetingDetails: (meetingId: string, updates: Partial<Meeting>) => 
       updateMeetingMutation.mutateAsync({ meetingId, updates }),
@@ -340,6 +372,7 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     isUpdating: updateMeetingMutation.isPending,
     isDeleting: deleteMeetingMutation.isPending,
     isTranscoding: retryTranscodingMutation.isPending,
+    isProcessing: triggerProcessingMutation.isPending,
   };
 });
 
