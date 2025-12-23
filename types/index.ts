@@ -36,6 +36,10 @@ export interface Meeting {
   // Processing
   error_message: string | null;
   
+  // Streaming transcription
+  live_transcript_data: Record<string, unknown> | null;
+  used_streaming_transcription: boolean;
+  
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +63,11 @@ export interface TranscriptSegment {
   start_ms: number;
   end_ms: number;
   confidence: number | null;
+  
+  // Streaming metadata
+  is_streaming_result: boolean;
+  streaming_session_id: string | null;
+  
   created_at: string;
 }
 

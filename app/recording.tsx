@@ -12,14 +12,20 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
-// Use expo-file-system for reliable file reading
-import { File as ExpoFile } from "expo-file-system";
-import * as LegacyFileSystem from "expo-file-system/legacy";
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+} from "expo-audio";
+import * as FileSystem from "expo-file-system";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
+import { useStreamingTranscription, TranscriptTurn } from "@/hooks/useStreamingTranscription";
+import LiveTranscript from "@/components/LiveTranscript";
 
 export default function RecordingScreen() {
   const router = useRouter();
@@ -27,53 +33,80 @@ export default function RecordingScreen() {
   const { uploadAudio, updateMeeting } = useMeetings();
   const { user } = useAuth();
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recordedAt, setRecordedAt] = useState<string | null>(null);
+  const [hasPermission, setHasPermission] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const hasStartedRef = useRef(false);
 
-  const startRecording = useCallback(async () => {
+  // expo-audio recorder hook
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
+
+  // Streaming transcription hook
+  const {
+    isConnected: isStreamingConnected,
+    turns: transcriptTurns,
+    currentPartial,
+    connect: connectStreaming,
+    disconnect: disconnectStreaming,
+  } = useStreamingTranscription();
+
+  // Request permissions and initialize
+  const initializeRecording = useCallback(async () => {
     if (hasStartedRef.current) return;
     hasStartedRef.current = true;
 
     try {
       console.log("[Recording] Requesting permissions...");
-      const { status } = await Audio.requestPermissionsAsync();
-      console.log("[Recording] Permission status:", status);
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      console.log("[Recording] Permission status:", status.granted);
 
-      if (status !== "granted") {
+      if (!status.granted) {
         throw new Error(
           "Microphone permission denied. Please grant microphone access in your device settings."
         );
       }
 
+      setHasPermission(true);
+
       console.log("[Recording] Setting audio mode...");
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      console.log("[Recording] Creating recording...");
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-        (status) => {
-          // Log metering data to verify microphone is capturing audio
-          if (status.isRecording && status.metering !== undefined) {
-            console.log("[Recording] Metering:", status.metering, "dB");
-          }
-        },
-        100 // Update every 100ms
-      );
+      setIsInitialized(true);
+    } catch (err) {
+      console.error("[Recording] Init error:", err);
+      if (Platform.OS !== "web") {
+        Alert.alert(
+          "Recording Error",
+          err instanceof Error ? err.message : "Failed to initialize recording"
+        );
+      }
+      router.back();
+    }
+  }, [router]);
 
-      recordingRef.current = recording;
-      setIsRecording(true);
+  // Start recording after initialization
+  const startRecording = useCallback(async () => {
+    if (!isInitialized || recorderState.isRecording) return;
+
+    try {
+      console.log("[Recording] Preparing to record...");
+      await audioRecorder.prepareToRecordAsync();
+      
+      console.log("[Recording] Starting recording...");
+      audioRecorder.record();
       setRecordedAt(new Date().toISOString());
+
+      // Connect to streaming transcription
+      console.log("[Recording] Connecting to streaming transcription...");
+      await connectStreaming();
+
       console.log("[Recording] Started successfully!");
     } catch (err) {
       console.error("[Recording] Start error:", err);
@@ -83,17 +116,25 @@ export default function RecordingScreen() {
           err instanceof Error ? err.message : "Failed to start recording"
         );
       }
-      router.back();
     }
-  }, [router]);
+  }, [isInitialized, recorderState.isRecording, audioRecorder, connectStreaming]);
 
+  // Initialize on mount
   useEffect(() => {
-    startRecording();
-  }, [startRecording]);
+    initializeRecording();
+  }, [initializeRecording]);
+
+  // Start recording when initialized
+  useEffect(() => {
+    if (isInitialized && hasPermission && !recorderState.isRecording) {
+      startRecording();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInitialized, hasPermission, startRecording]);
 
   // Pulse animation
   useEffect(() => {
-    if (isRecording && !isPaused && !isUploading) {
+    if (recorderState.isRecording && !isUploading) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -111,43 +152,18 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [isRecording, isPaused, isUploading, pulseAnim]);
-
-  // Timer
-  useEffect(() => {
-    if (isRecording && !isPaused) {
-      timerRef.current = setInterval(() => {
-        setElapsedSeconds((prev) => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [isRecording, isPaused]);
+  }, [recorderState.isRecording, isUploading, pulseAnim]);
 
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    const recording = recordingRef.current;
-    if (!recording) return;
-
     try {
-      if (isPaused) {
-        await recording.startAsync();
-        setIsPaused(false);
+      if (recorderState.isRecording) {
+        await audioRecorder.pause();
       } else {
-        await recording.pauseAsync();
-        setIsPaused(true);
+        audioRecorder.record();
       }
     } catch (err) {
       console.error("[Recording] Pause/Resume error:", err);
@@ -178,190 +194,76 @@ export default function RecordingScreen() {
   };
 
   const performStop = async () => {
-    const recording = recordingRef.current;
-    if (!recording || !meetingId || !user?.id) return;
+    if (!meetingId || !user?.id) return;
 
     setIsUploading(true);
 
     try {
-      // Get status before stopping to get duration
-      const statusBeforeStop = await recording.getStatusAsync();
-      const durationMillis = statusBeforeStop.durationMillis || elapsedSeconds * 1000;
+      // Get duration before stopping
+      const durationMillis = recorderState.durationMillis || 0;
       console.log("[Recording] Duration before stop:", durationMillis, "ms");
 
-      console.log("[Recording] Stopping and unloading...");
-      await recording.stopAndUnloadAsync();
+      // Disconnect streaming transcription
+      console.log("[Recording] Disconnecting streaming...");
+      disconnectStreaming();
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      // Stop the recorder
+      console.log("[Recording] Stopping recorder...");
+      await audioRecorder.stop();
+
+      // Reset audio mode
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
       });
 
-      const uri = recording.getURI();
+      const uri = audioRecorder.uri;
       console.log("[Recording] Stopped, URI:", uri);
 
       if (!uri) {
         throw new Error("No recording URI available. The recording may have failed.");
       }
 
-      // Platform-specific file reading
-      let fileData: Blob;
-      let contentType: string;
-      let fileExtension: string;
-      let audioFormat: string;
+      // Read file info
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      console.log("[Recording] File info:", JSON.stringify(fileInfo));
 
-      if (Platform.OS === "web") {
-        console.log("[Recording] Web platform - using fetch...");
-        const response = await fetch(uri);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch audio: ${response.statusText}`);
-        }
-        fileData = await response.blob();
-        contentType = fileData.type || "audio/webm";
-        const isWebm = contentType.includes("webm") || contentType.includes("ogg");
-        fileExtension = isWebm ? "webm" : "m4a";
-        audioFormat = isWebm ? "webm" : "m4a";
-        console.log("[Recording] Web audio format:", contentType, "->", audioFormat);
-      } else {
-        // NATIVE PLATFORM (iOS/Android)
-        console.log("[Recording] Native platform - reading file...");
-        console.log("[Recording] File URI:", uri);
-        
-        let bytesData: Uint8Array | null = null;
-        let fileSize = 0;
-        
-        // ========== Method 1: Try the new ExpoFile API ==========
-        try {
-          console.log("[Recording] Method 1: Trying ExpoFile API...");
-          const audioFile = new ExpoFile(uri);
-          
-          console.log("[Recording] - ExpoFile created successfully");
-          console.log("[Recording] - exists:", audioFile.exists);
-          console.log("[Recording] - size:", audioFile.size, "bytes");
-          console.log("[Recording] - type:", audioFile.type);
-          
-          if (audioFile.exists && audioFile.size > 0) {
-            fileSize = audioFile.size;
-            console.log("[Recording] - Reading bytes...");
-            bytesData = await audioFile.bytes();
-            console.log("[Recording] - bytes() returned:", bytesData?.length || 0, "bytes");
-            
-            if (bytesData && bytesData.length > 0) {
-              console.log("[Recording] Method 1 SUCCESS: Read", bytesData.length, "bytes");
-            } else {
-              console.log("[Recording] Method 1 FAILED: bytes() returned empty");
-              bytesData = null;
-            }
-          } else {
-            console.log("[Recording] Method 1 FAILED: File doesn't exist or is empty");
-          }
-        } catch (method1Error) {
-          console.warn("[Recording] Method 1 ERROR:", method1Error);
-        }
-        
-        // ========== Method 2: Try legacy FileSystem API ==========
-        if (!bytesData || bytesData.length === 0) {
-          try {
-            console.log("[Recording] Method 2: Trying legacy FileSystem API...");
-            
-            // Get file info
-            const fileInfo = await LegacyFileSystem.getInfoAsync(uri);
-            console.log("[Recording] - File info:", JSON.stringify(fileInfo));
-            
-            if (!fileInfo.exists) {
-              throw new Error("Recording file does not exist");
-            }
-            
-            fileSize = fileInfo.size || 0;
-            console.log("[Recording] - File size from info:", fileSize, "bytes");
-            
-            if (fileSize === 0) {
-              // Check if it's a directory
-              console.warn("[Recording] - File shows 0 bytes, checking if it's really a file...");
-            }
-            
-            // Read as base64
-            console.log("[Recording] - Reading file as base64...");
-            const base64Data = await LegacyFileSystem.readAsStringAsync(uri, {
-              encoding: LegacyFileSystem.EncodingType.Base64,
-            });
-            console.log("[Recording] - Base64 length:", base64Data.length, "characters");
-            
-            if (!base64Data || base64Data.length === 0) {
-              throw new Error("readAsStringAsync returned empty");
-            }
-            
-            // Convert base64 to bytes (React Native compatible - no atob)
-            console.log("[Recording] - Decoding base64...");
-            bytesData = base64ToUint8Array(base64Data);
-            console.log("[Recording] - Decoded:", bytesData.length, "bytes");
-            
-            if (bytesData && bytesData.length > 0) {
-              console.log("[Recording] Method 2 SUCCESS: Decoded", bytesData.length, "bytes");
-            } else {
-              console.log("[Recording] Method 2 FAILED: base64 decode returned empty");
-              bytesData = null;
-            }
-          } catch (method2Error) {
-            console.error("[Recording] Method 2 ERROR:", method2Error);
-          }
-        }
-        
-        // ========== Validate we got data ==========
-        if (!bytesData || bytesData.length === 0) {
-          // Log diagnostic info
-          console.error("[Recording] CRITICAL: All file reading methods failed!");
-          console.error("[Recording] URI was:", uri);
-          console.error("[Recording] File size was reported as:", fileSize);
-          
-          throw new Error(
-            `Failed to read audio file. The recording file may be empty or corrupted. ` +
-            `File size reported: ${fileSize} bytes. ` +
-            `Please check microphone permissions and try again.`
-          );
-        }
-        
-        if (bytesData.length < 1000) {
-          throw new Error(
-            `Recording file is too small (${bytesData.length} bytes). ` +
-            `Please try recording again for a longer duration.`
-          );
-        }
-        
-        // Create blob from bytes
-        contentType = "audio/mp4";
-        fileExtension = "m4a";
-        audioFormat = "m4a";
-        
-        fileData = new Blob([bytesData], { type: contentType });
-        console.log("[Recording] Created blob:", fileData.size, "bytes, type:", fileData.type);
-        
-        // Verify blob size matches bytes
-        if (fileData.size !== bytesData.length) {
-          console.warn("[Recording] WARNING: Blob size mismatch!", {
-            blobSize: fileData.size,
-            bytesLength: bytesData.length,
-          });
-        }
+      if (!fileInfo.exists) {
+        throw new Error("Recording file does not exist");
       }
 
-      // Final validation
-      console.log("[Recording] Final blob size:", fileData.size, "bytes");
-      
-      if (fileData.size === 0) {
-        throw new Error(
-          "Recording is empty (0 bytes). This may be due to microphone permission issues. " +
-          "Please check your device settings and try again."
-        );
+      // Read file as base64
+      console.log("[Recording] Reading file as base64...");
+      const base64Data = await FileSystem.readAsStringAsync(uri, {
+        encoding: "base64",
+      });
+      console.log("[Recording] Base64 length:", base64Data.length, "characters");
+
+      if (!base64Data || base64Data.length === 0) {
+        throw new Error("Failed to read recording file - empty content");
       }
 
-      // Upload to Supabase
+      // Determine file format and extension
+      const fileExtension = Platform.OS === "ios" ? "m4a" : "m4a";
+      const contentType = "audio/mp4";
+      const audioFormat = "m4a";
+
+      // Upload to Supabase using base64
       const audioPath = `${user.id}/${meetingId}/audio.${fileExtension}`;
-      console.log("[Recording] Uploading", fileData.size, "bytes to:", audioPath);
+      console.log("[Recording] Uploading to:", audioPath);
+
+      // Decode base64 to ArrayBuffer for upload
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      console.log("[Recording] Uploading", bytes.length, "bytes...");
 
       const { error: uploadError, data: uploadData } = await supabase.storage
         .from("meeting-audio")
-        .upload(audioPath, fileData, {
+        .upload(audioPath, bytes, {
           contentType,
           upsert: true,
         });
@@ -372,6 +274,12 @@ export default function RecordingScreen() {
       }
 
       console.log("[Recording] Upload successful:", uploadData);
+
+      // Save streaming transcript turns if available
+      if (transcriptTurns.length > 0) {
+        console.log("[Recording] Saving", transcriptTurns.length, "transcript turns...");
+        await saveStreamingTranscript(meetingId, transcriptTurns);
+      }
 
       // Trigger processing
       await uploadAudio({
@@ -405,44 +313,43 @@ export default function RecordingScreen() {
           err instanceof Error ? err.message : "Failed to save recording. Please try again."
         );
       }
-    } finally {
-      recordingRef.current = null;
     }
   };
 
-  // Base64 to Uint8Array decoder (React Native compatible - doesn't use atob)
-  const base64ToUint8Array = (base64: string): Uint8Array => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const lookup = new Uint8Array(256);
-    for (let i = 0; i < chars.length; i++) {
-      lookup[chars.charCodeAt(i)] = i;
+  // Save streaming transcript to database
+  const saveStreamingTranscript = async (meetingId: string, turns: TranscriptTurn[]) => {
+    try {
+      // Convert turns to segments format
+      const segments = turns.map((turn, index) => ({
+        meeting_id: meetingId,
+        speaker: turn.speaker || `Speaker ${index % 2 === 0 ? 'A' : 'B'}`,
+        text: turn.text,
+        start_ms: turn.startTime,
+        end_ms: turn.endTime,
+        confidence: turn.confidence || 0.9,
+      }));
+
+      if (segments.length > 0) {
+        const { error } = await supabase
+          .from("transcript_segments")
+          .insert(segments);
+
+        if (error) {
+          console.error("[Recording] Error saving streaming transcript:", error);
+        } else {
+          console.log("[Recording] Saved", segments.length, "transcript segments");
+        }
+      }
+    } catch (err) {
+      console.error("[Recording] Error saving streaming transcript:", err);
     }
-    
-    // Remove whitespace and padding
-    const cleanBase64 = base64.replace(/[^A-Za-z0-9+/]/g, "");
-    const paddingLen = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-    const outputLen = Math.floor((cleanBase64.length * 3) / 4) - paddingLen;
-    const output = new Uint8Array(outputLen);
-    
-    let p = 0;
-    for (let i = 0; i < cleanBase64.length; i += 4) {
-      const a = lookup[cleanBase64.charCodeAt(i)];
-      const b = lookup[cleanBase64.charCodeAt(i + 1)];
-      const c = lookup[cleanBase64.charCodeAt(i + 2)];
-      const d = lookup[cleanBase64.charCodeAt(i + 3)];
-      
-      output[p++] = (a << 2) | (b >> 4);
-      if (p < outputLen) output[p++] = ((b & 15) << 4) | (c >> 2);
-      if (p < outputLen) output[p++] = ((c & 3) << 6) | d;
-    }
-    
-    return output;
   };
 
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000);
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
 
     if (hrs > 0) {
       return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
@@ -450,9 +357,12 @@ export default function RecordingScreen() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const isPaused = !recorderState.isRecording && recorderState.durationMillis > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
+        {/* Recording Indicator */}
         <View style={styles.recordingIndicator}>
           <Animated.View
             style={[
@@ -472,8 +382,26 @@ export default function RecordingScreen() {
           {isPaused ? "Paused" : isUploading ? "Uploading..." : "Recording"}
         </Text>
 
-        <Text style={styles.timer}>{formatTime(elapsedSeconds)}</Text>
+        <Text style={styles.timer}>{formatTime(recorderState.durationMillis)}</Text>
 
+        {/* Streaming Connection Status */}
+        {isStreamingConnected && (
+          <View style={styles.streamingStatus}>
+            <View style={styles.streamingDot} />
+            <Text style={styles.streamingText}>Live Transcription Active</Text>
+          </View>
+        )}
+
+        {/* Live Transcript Display */}
+        <View style={styles.transcriptContainer}>
+          <LiveTranscript
+            turns={transcriptTurns}
+            currentPartial={currentPartial}
+            isConnected={isStreamingConnected}
+          />
+        </View>
+
+        {/* Controls */}
         <View style={styles.controls}>
           <Pressable
             style={[styles.controlButton, styles.pauseButton]}
@@ -511,26 +439,26 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
+    paddingTop: 20,
   },
   recordingIndicator: {
-    marginBottom: 40,
+    marginBottom: 20,
     alignItems: "center",
     justifyContent: "center",
+    alignSelf: "center",
   },
   pulseRing: {
     position: "absolute",
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: Colors.recording,
-  },
-  recordingDot: {
     width: 100,
     height: 100,
     borderRadius: 50,
+    backgroundColor: Colors.recording,
+  },
+  recordingDot: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: Colors.recording,
     justifyContent: "center",
     alignItems: "center",
@@ -539,25 +467,52 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceLight,
   },
   statusText: {
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 18,
+    fontWeight: "600",
     color: Colors.text,
-    marginBottom: 20,
+    marginBottom: 8,
     letterSpacing: -0.3,
+    textAlign: "center",
   },
   timer: {
-    fontSize: 68,
+    fontSize: 48,
     fontWeight: "200",
     color: Colors.text,
     fontVariant: ["tabular-nums"],
-    marginBottom: 56,
-    letterSpacing: -2,
+    marginBottom: 16,
+    letterSpacing: -1,
+    textAlign: "center",
+  },
+  streamingStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+    gap: 8,
+  },
+  streamingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#10B981",
+  },
+  streamingText: {
+    fontSize: 13,
+    color: "#10B981",
+    fontWeight: "500",
+  },
+  transcriptContainer: {
+    flex: 1,
+    marginBottom: 20,
+    minHeight: 150,
+    maxHeight: 300,
   },
   controls: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 40,
+    gap: 32,
+    marginBottom: 16,
   },
   controlButton: {
     justifyContent: "center",
@@ -565,19 +520,19 @@ const styles = StyleSheet.create({
     borderRadius: 40,
   },
   pauseButton: {
-    width: 76,
-    height: 76,
+    width: 64,
+    height: 64,
     backgroundColor: Colors.surfaceLight,
   },
   stopButton: {
-    width: 84,
-    height: 84,
+    width: 72,
+    height: 72,
     backgroundColor: Colors.recording,
   },
   hint: {
-    marginTop: 40,
-    fontSize: 15,
+    fontSize: 14,
     color: Colors.textMuted,
     textAlign: "center",
+    marginBottom: 20,
   },
 });
