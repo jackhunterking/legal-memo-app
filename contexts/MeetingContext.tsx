@@ -3,15 +3,14 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
-import { useMeetingTypes } from './MeetingTypeContext';
-import type { AudioFormat, Meeting, MeetingWithDetails } from '@/types';
+import type { Meeting, MeetingWithDetails, Transcript, TranscriptSegment } from '@/types';
 
 export const [MeetingProvider, useMeetings] = createContextHook(() => {
-  const { user, profile } = useAuth();
-  const { meetingTypes } = useMeetingTypes();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
 
+  // Fetch all meetings for the user
   const meetingsQuery = useQuery({
     queryKey: ['meetings', user?.id],
     queryFn: async (): Promise<Meeting[]> => {
@@ -20,54 +19,46 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       
       const { data, error } = await supabase
         .from('meetings')
-        .select('*, meeting_type:meeting_types(*)')
+        .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       
       if (error) {
-        console.error('[MeetingContext] Error fetching meetings:', error.message || JSON.stringify(error));
-        if (error.code === '42P01' || error.code === 'PGRST116') {
-          console.log('[MeetingContext] Meetings table may not exist yet');
-          return [];
-        }
+        console.error('[MeetingContext] Error fetching meetings:', error.message);
         return [];
       }
+      
       console.log('[MeetingContext] Fetched', data?.length, 'meetings');
       return data || [];
     },
     enabled: !!user?.id,
   });
 
-  const createInstantMeetingMutation = useMutation({
+  // Create a new meeting (when user starts recording)
+  const createMeetingMutation = useMutation({
     mutationFn: async (): Promise<Meeting> => {
       if (!user?.id) throw new Error('Not authenticated');
-      console.log('[MeetingContext] Creating instant meeting...');
+      console.log('[MeetingContext] Creating new meeting...');
       
       const now = new Date();
-      const autoTitle = `Meeting ${now.toISOString().split('T')[0]} ${now.toTimeString().slice(0, 5)}`;
-      
-      // Use the first active meeting type, or null if none available
-      const defaultMeetingTypeId = meetingTypes[0]?.id || null;
+      const title = `Meeting ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
       
       const { data, error } = await supabase
         .from('meetings')
         .insert({
           user_id: user.id,
-          auto_title: autoTitle,
-          meeting_type_id: defaultMeetingTypeId,
-          status: 'recording',
-          billable: profile?.last_billable_setting ?? false,
-          billable_seconds: 0,
-          hourly_rate_snapshot: profile?.default_hourly_rate ?? 250,
+          title,
+          status: 'uploading',
           duration_seconds: 0,
         })
-        .select('*, meeting_type:meeting_types(*)')
+        .select()
         .single();
       
       if (error) {
-        console.error('[MeetingContext] Error creating meeting:', error.message || JSON.stringify(error));
+        console.error('[MeetingContext] Error creating meeting:', error.message);
         throw new Error(error.message || 'Failed to create meeting');
       }
+      
       console.log('[MeetingContext] Created meeting:', data.id);
       setActiveMeetingId(data.id);
       return data;
@@ -77,126 +68,61 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
-  const finalizeUploadMutation = useMutation({
+  // Upload audio and queue for processing
+  const uploadAudioMutation = useMutation({
     mutationFn: async ({
       meetingId,
       audioPath,
       audioFormat,
       durationSeconds,
-      startedAt,
-      endedAt,
+      recordedAt,
     }: {
       meetingId: string;
       audioPath: string;
-      audioFormat: AudioFormat;
+      audioFormat: string;
       durationSeconds: number;
-      startedAt: string;
-      endedAt: string;
+      recordedAt: string;
     }) => {
-      console.log('[MeetingContext] Finalizing upload for meeting:', meetingId, 'format:', audioFormat);
+      console.log('[MeetingContext] Uploading audio for meeting:', meetingId);
       
-      // Determine the initial audio_format status
-      // If it's webm, we'll need to trigger transcoding
-      const initialFormat: AudioFormat = audioFormat === 'webm' ? 'transcoding' : audioFormat;
-      
+      // Update meeting with audio info and set status to 'queued'
+      // This will trigger the database trigger to create a processing job
+      // The Edge Function will be invoked via webhook
       const { error } = await supabase
         .from('meetings')
         .update({
-          audio_path: audioPath,
-          audio_format: initialFormat,
+          raw_audio_path: audioPath,
+          raw_audio_format: audioFormat,
           duration_seconds: durationSeconds,
-          billable_seconds: durationSeconds,
-          started_at: startedAt,
-          ended_at: endedAt,
-          status: 'processing',
+          recorded_at: recordedAt,
+          status: 'queued',
         })
         .eq('id', meetingId);
       
       if (error) {
-        console.error('[MeetingContext] Error finalizing upload:', error.message || JSON.stringify(error));
-        throw new Error(error.message || 'Failed to finalize upload');
+        console.error('[MeetingContext] Error updating meeting:', error.message);
+        throw new Error(error.message || 'Failed to update meeting');
       }
       
-      const { error: jobError } = await supabase
-        .from('meeting_jobs')
-        .insert({
-          meeting_id: meetingId,
-          status: 'queued',
-          attempts: 0,
-        });
-      
-      if (jobError) console.error('[MeetingContext] Job creation error:', jobError);
-      
-      // If the audio is webm, trigger transcoding Edge Function
-      if (audioFormat === 'webm') {
-        console.log('[MeetingContext] WebM format detected, triggering transcoding...');
-        try {
-          const { error: transcodeError } = await supabase.functions.invoke('transcode-audio', {
-            body: { meetingId, audioPath },
-          });
-          
-          if (transcodeError) {
-            console.error('[MeetingContext] Transcoding trigger error:', transcodeError);
-            // Don't throw - transcoding failure shouldn't block the upload
-          } else {
-            console.log('[MeetingContext] Transcoding triggered successfully');
-          }
-        } catch (err) {
-          console.error('[MeetingContext] Failed to trigger transcoding:', err);
-          // Don't throw - we'll handle this gracefully in the UI
-        }
-      }
-      
-      console.log('[MeetingContext] Upload finalized, processing queued');
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['meetings'] });
-    },
-  });
-
-  // Trigger the process-meeting Edge Function
-  const triggerProcessingMutation = useMutation({
-    mutationFn: async (meetingId: string) => {
-      console.log('[MeetingContext] Triggering AI processing for meeting:', meetingId);
-      
+      // Also explicitly trigger the Edge Function (backup in case DB trigger doesn't work)
       try {
-        const { data, error } = await supabase.functions.invoke('process-meeting', {
+        console.log('[MeetingContext] Triggering processing...');
+        await supabase.functions.invoke('process-recording', {
           body: { meeting_id: meetingId },
         });
-        
-        if (error) {
-          // Try to get more details from the error
-          let errorMessage = 'Edge Function error';
-          if ('context' in error && error.context) {
-            try {
-              const ctx = error.context as Response;
-              const errorBody = await ctx.json();
-              errorMessage = errorBody?.error || errorBody?.message || errorMessage;
-              console.error('[MeetingContext] Edge Function error details:', errorBody);
-            } catch {
-              console.error('[MeetingContext] Could not parse error context');
-            }
-          }
-          console.error('[MeetingContext] Error triggering processing:', errorMessage);
-          // Don't throw - the meeting status will reflect the error from the Edge Function
-          // The Edge Function updates the meeting status to 'failed' with error_message on error
-          return { error: errorMessage };
-        }
-        
-        console.log('[MeetingContext] Processing triggered successfully:', data);
-        return data;
       } catch (err) {
-        console.error('[MeetingContext] Failed to invoke Edge Function:', err);
-        // Network error or function not deployed - don't throw, let UI handle gracefully
-        return { error: 'Processing service unavailable. Please check Edge Function deployment.' };
+        console.warn('[MeetingContext] Failed to trigger Edge Function (may still work via DB trigger):', err);
+        // Don't throw - the DB trigger may still invoke the function
       }
+      
+      console.log('[MeetingContext] Audio uploaded and processing queued');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
-      queryClient.invalidateQueries({ queryKey: ['meeting'] });
     },
   });
 
+  // Update meeting details
   const updateMeetingMutation = useMutation({
     mutationFn: async ({
       meetingId,
@@ -215,9 +141,10 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
         .single();
       
       if (error) {
-        console.error('[MeetingContext] Error updating meeting:', error.message || JSON.stringify(error));
+        console.error('[MeetingContext] Error updating meeting:', error.message);
         throw new Error(error.message || 'Failed to update meeting');
       }
+      
       return data;
     },
     onSuccess: () => {
@@ -226,36 +153,43 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  // Delete a meeting
   const deleteMeetingMutation = useMutation({
     mutationFn: async (meetingId: string) => {
       console.log('[MeetingContext] Deleting meeting:', meetingId);
       
+      // Get the meeting to find audio paths
       const { data: meeting } = await supabase
         .from('meetings')
-        .select('audio_path')
+        .select('raw_audio_path, mp3_audio_path')
         .eq('id', meetingId)
         .single();
       
-      if (meeting?.audio_path) {
-        await supabase.storage
-          .from('meeting-audio')
-          .remove([meeting.audio_path]);
+      // Delete audio files from storage
+      const pathsToDelete: string[] = [];
+      if (meeting?.raw_audio_path) pathsToDelete.push(meeting.raw_audio_path);
+      if (meeting?.mp3_audio_path) pathsToDelete.push(meeting.mp3_audio_path);
+      
+      if (pathsToDelete.length > 0) {
+        await supabase.storage.from('meeting-audio').remove(pathsToDelete);
       }
       
-      await supabase.from('ai_outputs').delete().eq('meeting_id', meetingId);
+      // Delete related records (cascades should handle most, but be explicit)
       await supabase.from('transcript_segments').delete().eq('meeting_id', meetingId);
-      await supabase.from('meeting_consent_logs').delete().eq('meeting_id', meetingId);
-      await supabase.from('meeting_jobs').delete().eq('meeting_id', meetingId);
+      await supabase.from('transcripts').delete().eq('meeting_id', meetingId);
+      await supabase.from('processing_jobs').delete().eq('meeting_id', meetingId);
       
+      // Delete the meeting
       const { error } = await supabase
         .from('meetings')
         .delete()
         .eq('id', meetingId);
       
       if (error) {
-        console.error('[MeetingContext] Error deleting meeting:', error.message || JSON.stringify(error));
+        console.error('[MeetingContext] Error deleting meeting:', error.message);
         throw new Error(error.message || 'Failed to delete meeting');
       }
+      
       console.log('[MeetingContext] Meeting deleted');
     },
     onSuccess: () => {
@@ -263,73 +197,41 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  // Retry processing for a failed meeting
   const retryProcessingMutation = useMutation({
     mutationFn: async (meetingId: string) => {
       console.log('[MeetingContext] Retrying processing for:', meetingId);
       
-      // Update meeting status to processing
+      // Reset meeting status to queued
       await supabase
         .from('meetings')
-        .update({ status: 'processing', error_message: null })
+        .update({ status: 'queued', error_message: null })
         .eq('id', meetingId);
       
-      // Reset job status
-      const { error } = await supabase
-        .from('meeting_jobs')
+      // Reset or create processing job
+      await supabase
+        .from('processing_jobs')
         .upsert({
           meeting_id: meetingId,
-          status: 'queued',
+          status: 'pending',
+          step: null,
           attempts: 0,
-          last_error: null,
-          locked_at: null,
+          error: null,
+          started_at: null,
+          completed_at: null,
         });
       
-      if (error) {
-        console.error('[MeetingContext] Error retrying processing:', error.message || JSON.stringify(error));
-        throw new Error(error.message || 'Failed to retry processing');
-      }
-      
       // Trigger the Edge Function
-      await triggerProcessingMutation.mutateAsync(meetingId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['meetings'] });
-      queryClient.invalidateQueries({ queryKey: ['meeting'] });
-    },
-  });
-
-  const retryTranscodingMutation = useMutation({
-    mutationFn: async (meetingId: string) => {
-      console.log('[MeetingContext] Retrying transcoding for:', meetingId);
-      
-      // Get the meeting to find the audio path
-      const { data: meeting, error: fetchError } = await supabase
-        .from('meetings')
-        .select('audio_path')
-        .eq('id', meetingId)
-        .single();
-      
-      if (fetchError || !meeting?.audio_path) {
-        throw new Error('Could not find meeting audio');
-      }
-      
-      // Update status to transcoding
-      await supabase
-        .from('meetings')
-        .update({ audio_format: 'transcoding' })
-        .eq('id', meetingId);
-      
-      // Trigger the transcoding Edge Function
-      const { error } = await supabase.functions.invoke('transcode-audio', {
-        body: { meetingId, audioPath: meeting.audio_path },
+      const { error } = await supabase.functions.invoke('process-recording', {
+        body: { meeting_id: meetingId },
       });
       
       if (error) {
-        console.error('[MeetingContext] Error retrying transcoding:', error);
-        throw new Error(error.message || 'Failed to retry transcoding');
+        console.error('[MeetingContext] Error retrying processing:', error);
+        throw new Error('Failed to retry processing');
       }
       
-      console.log('[MeetingContext] Transcoding retry triggered');
+      console.log('[MeetingContext] Retry triggered');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
@@ -343,25 +245,23 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     activeMeetingId,
     setActiveMeetingId,
     
-    createInstantMeeting: createInstantMeetingMutation.mutateAsync,
-    finalizeUpload: finalizeUploadMutation.mutateAsync,
-    triggerProcessing: triggerProcessingMutation.mutateAsync,
+    // Actions
+    createMeeting: createMeetingMutation.mutateAsync,
+    uploadAudio: uploadAudioMutation.mutateAsync,
     updateMeeting: updateMeetingMutation.mutateAsync,
-    updateMeetingDetails: (meetingId: string, updates: Partial<Meeting>) => 
-      updateMeetingMutation.mutateAsync({ meetingId, updates }),
     deleteMeeting: deleteMeetingMutation.mutateAsync,
     retryProcessing: retryProcessingMutation.mutateAsync,
-    retryTranscoding: retryTranscodingMutation.mutateAsync,
     
-    isCreating: createInstantMeetingMutation.isPending,
-    isUploading: finalizeUploadMutation.isPending,
+    // Loading states
+    isCreating: createMeetingMutation.isPending,
+    isUploading: uploadAudioMutation.isPending,
     isUpdating: updateMeetingMutation.isPending,
     isDeleting: deleteMeetingMutation.isPending,
-    isTranscoding: retryTranscodingMutation.isPending,
-    isProcessing: triggerProcessingMutation.isPending,
+    isRetrying: retryProcessingMutation.isPending,
   };
 });
 
+// Hook to get a single meeting with all details
 export function useMeetingDetails(meetingId: string | null) {
   const { user } = useAuth();
   
@@ -371,41 +271,54 @@ export function useMeetingDetails(meetingId: string | null) {
       if (!meetingId || !user?.id) return null;
       console.log('[MeetingContext] Fetching meeting details:', meetingId);
       
-      const { data: meeting, error } = await supabase
+      // Fetch meeting
+      const { data: meeting, error: meetingError } = await supabase
         .from('meetings')
-        .select('*, meeting_type:meeting_types(*)')
+        .select('*')
         .eq('id', meetingId)
         .eq('user_id', user.id)
         .single();
       
-      if (error) {
-        console.error('[MeetingContext] Error fetching meeting details:', error.message || JSON.stringify(error));
+      if (meetingError || !meeting) {
+        console.error('[MeetingContext] Error fetching meeting:', meetingError?.message);
         return null;
       }
       
-      const { data: aiOutput } = await supabase
-        .from('ai_outputs')
+      // Fetch transcript
+      const { data: transcript } = await supabase
+        .from('transcripts')
         .select('*')
         .eq('meeting_id', meetingId)
         .single();
       
+      // Fetch transcript segments
       const { data: segments } = await supabase
         .from('transcript_segments')
         .select('*')
         .eq('meeting_id', meetingId)
         .order('start_ms', { ascending: true });
       
+      // Fetch processing job
+      const { data: processingJob } = await supabase
+        .from('processing_jobs')
+        .select('*')
+        .eq('meeting_id', meetingId)
+        .single();
+      
       return {
         ...meeting,
-        ai_output: aiOutput || undefined,
-        transcript_segments: segments || undefined,
+        transcript: transcript || undefined,
+        segments: segments || undefined,
+        processing_job: processingJob || undefined,
       };
     },
     enabled: !!meetingId && !!user?.id,
+    // Poll while processing
     refetchInterval: (query) => {
       const data = query.state.data;
-      // Poll when processing, uploading, or transcoding audio
-      if (data?.status === 'processing' || data?.status === 'uploading' || data?.audio_format === 'transcoding') {
+      const status = data?.status;
+      // Poll every 3 seconds while not ready or failed
+      if (status && !['ready', 'failed'].includes(status)) {
         return 3000;
       }
       return false;

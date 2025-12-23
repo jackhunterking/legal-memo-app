@@ -97,8 +97,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         .upsert({
           id: userId,
           email: userEmail,
-          default_hourly_rate: profileData.default_hourly_rate ?? 250,
-          last_billable_setting: profileData.last_billable_setting ?? false,
+          display_name: profileData.display_name ?? null,
           onboarding_completed: true,
         })
         .select()

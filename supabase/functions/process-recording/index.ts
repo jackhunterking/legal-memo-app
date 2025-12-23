@@ -1,0 +1,544 @@
+// Supabase Edge Function: process-recording
+// Unified pipeline: CloudConvert (audio conversion) + AssemblyAI (transcription with diarization)
+
+/// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
+
+// API URLs
+const CLOUDCONVERT_API_URL = "https://api.cloudconvert.com/v2";
+const ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2";
+
+// Types
+interface ProcessRequest {
+  meeting_id: string;
+}
+
+interface CloudConvertJob {
+  id: string;
+  status: string;
+  tasks: Array<{
+    id: string;
+    name: string;
+    status: string;
+    result?: {
+      files?: Array<{
+        url: string;
+        filename: string;
+      }>;
+      form?: {
+        url: string;
+        parameters: Record<string, string>;
+      };
+    };
+  }>;
+}
+
+interface AssemblyAITranscript {
+  id: string;
+  status: string;
+  text?: string;
+  utterances?: Array<{
+    speaker: string;
+    text: string;
+    start: number;
+    end: number;
+    confidence: number;
+  }>;
+  error?: string;
+}
+
+// Helper: Update meeting status
+async function updateMeetingStatus(
+  supabase: ReturnType<typeof createClient>,
+  meetingId: string,
+  status: string,
+  additionalData: Record<string, unknown> = {}
+) {
+  const { error } = await supabase
+    .from("meetings")
+    .update({ status, ...additionalData })
+    .eq("id", meetingId);
+
+  if (error) {
+    console.error(`[ProcessRecording] Failed to update status to ${status}:`, error);
+  }
+}
+
+// Helper: Update job status
+async function updateJobStatus(
+  supabase: ReturnType<typeof createClient>,
+  meetingId: string,
+  status: string,
+  step: string | null,
+  error: string | null = null
+) {
+  const updates: Record<string, unknown> = { status, step };
+  if (error) updates.error = error;
+  if (status === "processing" && !updates.started_at) {
+    updates.started_at = new Date().toISOString();
+  }
+  if (status === "completed" || status === "failed") {
+    updates.completed_at = new Date().toISOString();
+  }
+
+  await supabase
+    .from("processing_jobs")
+    .update(updates)
+    .eq("meeting_id", meetingId);
+}
+
+// Step 1: Convert audio to MP3 using CloudConvert
+async function convertToMp3(
+  audioBlob: Blob,
+  originalFormat: string,
+  cloudConvertApiKey: string
+): Promise<Blob> {
+  console.log("[ProcessRecording] Starting CloudConvert conversion...");
+
+  // Create job with import, convert, and export tasks
+  const createJobResponse = await fetch(`${CLOUDCONVERT_API_URL}/jobs`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cloudConvertApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      tasks: {
+        "import-audio": {
+          operation: "import/upload",
+        },
+        "convert-audio": {
+          operation: "convert",
+          input: "import-audio",
+          output_format: "mp3",
+          audio_codec: "mp3",
+          audio_bitrate: 128,
+        },
+        "export-audio": {
+          operation: "export/url",
+          input: "convert-audio",
+          inline: false,
+          archive_multiple_files: false,
+        },
+      },
+    }),
+  });
+
+  if (!createJobResponse.ok) {
+    const errorText = await createJobResponse.text();
+    throw new Error(`CloudConvert job creation failed: ${errorText}`);
+  }
+
+  const jobData = await createJobResponse.json() as { data: CloudConvertJob };
+  console.log(`[ProcessRecording] CloudConvert job created: ${jobData.data.id}`);
+
+  // Get upload task
+  const uploadTask = jobData.data.tasks.find((t) => t.name === "import-audio");
+  if (!uploadTask) {
+    throw new Error("Upload task not found in CloudConvert job");
+  }
+
+  // Get upload URL
+  const getTaskResponse = await fetch(
+    `${CLOUDCONVERT_API_URL}/tasks/${uploadTask.id}`,
+    {
+      headers: { Authorization: `Bearer ${cloudConvertApiKey}` },
+    }
+  );
+  const taskData = await getTaskResponse.json() as { data: CloudConvertJob["tasks"][0] };
+
+  if (!taskData.data.result?.form) {
+    throw new Error("Upload form not ready");
+  }
+
+  // Upload the file
+  console.log("[ProcessRecording] Uploading to CloudConvert...");
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(taskData.data.result.form.parameters)) {
+    formData.append(key, value);
+  }
+  formData.append("file", audioBlob, `audio.${originalFormat}`);
+
+  const uploadResponse = await fetch(taskData.data.result.form.url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error("Failed to upload file to CloudConvert");
+  }
+
+  console.log("[ProcessRecording] File uploaded, waiting for conversion...");
+
+  // Poll for completion
+  let attempts = 0;
+  const maxAttempts = 60; // 5 minutes max
+  let completedJob: CloudConvertJob | null = null;
+
+  while (attempts < maxAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    const statusResponse = await fetch(
+      `${CLOUDCONVERT_API_URL}/jobs/${jobData.data.id}`,
+      {
+        headers: { Authorization: `Bearer ${cloudConvertApiKey}` },
+      }
+    );
+    const statusData = await statusResponse.json() as { data: CloudConvertJob };
+
+    if (statusData.data.status === "finished") {
+      completedJob = statusData.data;
+      break;
+    } else if (statusData.data.status === "error") {
+      throw new Error("CloudConvert conversion failed");
+    }
+
+    console.log(`[ProcessRecording] CloudConvert status: ${statusData.data.status}, attempt ${attempts + 1}`);
+    attempts++;
+  }
+
+  if (!completedJob) {
+    throw new Error("CloudConvert conversion timed out");
+  }
+
+  // Download converted file
+  const exportTask = completedJob.tasks.find((t) => t.name === "export-audio");
+  const exportedFileUrl = exportTask?.result?.files?.[0]?.url;
+
+  if (!exportedFileUrl) {
+    throw new Error("No exported file URL found from CloudConvert");
+  }
+
+  console.log("[ProcessRecording] Downloading converted MP3...");
+  const mp3Response = await fetch(exportedFileUrl);
+  if (!mp3Response.ok) {
+    throw new Error("Failed to download converted file from CloudConvert");
+  }
+
+  return await mp3Response.blob();
+}
+
+// Step 2: Transcribe with AssemblyAI
+async function transcribeAudio(
+  audioUrl: string,
+  assemblyAIKey: string
+): Promise<AssemblyAITranscript> {
+  console.log("[ProcessRecording] Submitting to AssemblyAI for transcription...");
+
+  // Submit transcription job
+  const submitResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
+    method: "POST",
+    headers: {
+      Authorization: assemblyAIKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      speaker_labels: true,      // Enable diarization
+      auto_highlights: true,     // Key moments
+      language_code: "en",
+    }),
+  });
+
+  if (!submitResponse.ok) {
+    const errorText = await submitResponse.text();
+    throw new Error(`AssemblyAI submission failed: ${errorText}`);
+  }
+
+  const submission = await submitResponse.json() as AssemblyAITranscript;
+  console.log(`[ProcessRecording] AssemblyAI transcript ID: ${submission.id}`);
+
+  // Poll for completion
+  let attempts = 0;
+  const maxAttempts = 120; // 10 minutes max
+
+  while (attempts < maxAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    const statusResponse = await fetch(
+      `${ASSEMBLYAI_API_URL}/transcript/${submission.id}`,
+      {
+        headers: { Authorization: assemblyAIKey },
+      }
+    );
+
+    const transcript = await statusResponse.json() as AssemblyAITranscript;
+
+    if (transcript.status === "completed") {
+      console.log("[ProcessRecording] AssemblyAI transcription complete");
+      return transcript;
+    }
+
+    if (transcript.status === "error") {
+      throw new Error(`AssemblyAI transcription failed: ${transcript.error}`);
+    }
+
+    console.log(`[ProcessRecording] AssemblyAI status: ${transcript.status}, attempt ${attempts + 1}`);
+    attempts++;
+  }
+
+  throw new Error("AssemblyAI transcription timed out");
+}
+
+// Step 3: Generate summary using AssemblyAI LeMUR
+async function generateSummary(
+  transcriptId: string,
+  assemblyAIKey: string
+): Promise<string> {
+  console.log("[ProcessRecording] Generating summary with LeMUR...");
+
+  const response = await fetch(`${ASSEMBLYAI_API_URL}/lemur/v3/generate/summary`, {
+    method: "POST",
+    headers: {
+      Authorization: assemblyAIKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      transcript_ids: [transcriptId],
+      final_model: "anthropic/claude-3-haiku",
+      context: "This is a meeting recording. Provide a concise summary.",
+      answer_format: "A professional summary of the key points discussed.",
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("[ProcessRecording] Summary generation failed, using fallback");
+    return "Summary not available.";
+  }
+
+  const result = await response.json() as { response: string };
+  return result.response || "Summary not available.";
+}
+
+// Main handler
+Deno.serve(async (req: Request) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  const startTime = Date.now();
+  let meetingId: string | null = null;
+
+  try {
+    const body = await req.json() as ProcessRequest;
+    meetingId = body.meeting_id;
+
+    if (!meetingId) {
+      return new Response(
+        JSON.stringify({ error: "Missing meeting_id" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[ProcessRecording] Starting pipeline for meeting: ${meetingId}`);
+
+    // Get environment variables
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
+    const assemblyAIKey = Deno.env.get("ASSEMBLYAI_API_KEY");
+
+    if (!cloudConvertApiKey) {
+      throw new Error("CLOUDCONVERT_API_KEY not configured");
+    }
+    if (!assemblyAIKey) {
+      throw new Error("ASSEMBLYAI_API_KEY not configured");
+    }
+
+    // Initialize Supabase client
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Fetch meeting details
+    const { data: meeting, error: meetingError } = await supabase
+      .from("meetings")
+      .select("*")
+      .eq("id", meetingId)
+      .single();
+
+    if (meetingError || !meeting) {
+      throw new Error(`Meeting not found: ${meetingError?.message}`);
+    }
+
+    if (!meeting.raw_audio_path) {
+      throw new Error("Meeting has no audio file");
+    }
+
+    console.log(`[ProcessRecording] Found meeting, audio: ${meeting.raw_audio_path}`);
+
+    // Update job status to processing
+    await updateJobStatus(supabase, meetingId, "processing", "converting");
+
+    // ============================================
+    // STEP 1: Download raw audio
+    // ============================================
+    console.log("[ProcessRecording] Downloading raw audio...");
+    await updateMeetingStatus(supabase, meetingId, "converting");
+
+    const { data: audioBlob, error: downloadError } = await supabase.storage
+      .from("meeting-audio")
+      .download(meeting.raw_audio_path);
+
+    if (downloadError || !audioBlob) {
+      throw new Error(`Failed to download audio: ${downloadError?.message}`);
+    }
+
+    console.log(`[ProcessRecording] Downloaded audio, size: ${audioBlob.size} bytes`);
+
+    // ============================================
+    // STEP 2: Convert to MP3 using CloudConvert
+    // ============================================
+    const originalFormat = meeting.raw_audio_format || "webm";
+    const mp3Blob = await convertToMp3(audioBlob, originalFormat, cloudConvertApiKey);
+    console.log(`[ProcessRecording] Converted to MP3, size: ${mp3Blob.size} bytes`);
+
+    // Upload MP3 to Supabase Storage
+    const mp3Path = meeting.raw_audio_path.replace(/\.[^/.]+$/, ".mp3");
+    const { error: uploadError } = await supabase.storage
+      .from("meeting-audio")
+      .upload(mp3Path, mp3Blob, {
+        contentType: "audio/mpeg",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Failed to upload MP3: ${uploadError.message}`);
+    }
+
+    console.log(`[ProcessRecording] MP3 uploaded to: ${mp3Path}`);
+
+    // Update meeting with MP3 path
+    await supabase
+      .from("meetings")
+      .update({ mp3_audio_path: mp3Path })
+      .eq("id", meetingId);
+
+    // ============================================
+    // STEP 3: Transcribe with AssemblyAI
+    // ============================================
+    await updateJobStatus(supabase, meetingId, "processing", "transcribing");
+    await updateMeetingStatus(supabase, meetingId, "transcribing");
+
+    // Get signed URL for the MP3 file
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from("meeting-audio")
+      .createSignedUrl(mp3Path, 3600); // 1 hour expiry
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      throw new Error(`Failed to get signed URL: ${signedUrlError?.message}`);
+    }
+
+    // Transcribe
+    const transcript = await transcribeAudio(signedUrlData.signedUrl, assemblyAIKey);
+
+    // ============================================
+    // STEP 4: Generate summary
+    // ============================================
+    const summary = await generateSummary(transcript.id, assemblyAIKey);
+
+    // ============================================
+    // STEP 5: Save transcript and segments
+    // ============================================
+    console.log("[ProcessRecording] Saving transcript...");
+
+    // Delete existing transcript/segments for this meeting (in case of retry)
+    await supabase.from("transcript_segments").delete().eq("meeting_id", meetingId);
+    await supabase.from("transcripts").delete().eq("meeting_id", meetingId);
+
+    // Save main transcript
+    const { error: transcriptError } = await supabase
+      .from("transcripts")
+      .insert({
+        meeting_id: meetingId,
+        full_text: transcript.text || "",
+        summary: summary,
+        assemblyai_transcript_id: transcript.id,
+      });
+
+    if (transcriptError) {
+      console.error("[ProcessRecording] Error saving transcript:", transcriptError);
+    }
+
+    // Save transcript segments (utterances with speaker info)
+    if (transcript.utterances && transcript.utterances.length > 0) {
+      const segments = transcript.utterances.map((utterance) => ({
+        meeting_id: meetingId,
+        speaker: utterance.speaker,
+        text: utterance.text,
+        start_ms: utterance.start,
+        end_ms: utterance.end,
+        confidence: utterance.confidence,
+      }));
+
+      const { error: segmentsError } = await supabase
+        .from("transcript_segments")
+        .insert(segments);
+
+      if (segmentsError) {
+        console.error("[ProcessRecording] Error saving segments:", segmentsError);
+      } else {
+        console.log(`[ProcessRecording] Saved ${segments.length} transcript segments`);
+      }
+    }
+
+    // ============================================
+    // STEP 6: Update status to ready
+    // ============================================
+    await updateJobStatus(supabase, meetingId, "completed", null);
+    await updateMeetingStatus(supabase, meetingId, "ready");
+
+    const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[ProcessRecording] Pipeline complete in ${processingTime}s for meeting: ${meetingId}`);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        meeting_id: meetingId,
+        transcript_id: transcript.id,
+        processing_time_seconds: parseFloat(processingTime),
+        stats: {
+          segments: transcript.utterances?.length || 0,
+          text_length: transcript.text?.length || 0,
+        },
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+
+  } catch (error) {
+    console.error("[ProcessRecording] Pipeline error:", error);
+
+    // Update status to failed
+    if (meetingId) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        const errorMessage = error instanceof Error ? error.message : "Processing failed";
+        
+        await updateMeetingStatus(supabase, meetingId, "failed", { error_message: errorMessage });
+        await updateJobStatus(supabase, meetingId, "failed", null, errorMessage);
+      } catch (updateError) {
+        console.error("[ProcessRecording] Failed to update error status:", updateError);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Processing failed",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});
+

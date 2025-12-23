@@ -12,10 +12,8 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { 
   Upload, 
+  FileAudio, 
   FileText, 
-  Brain, 
-  ListChecks, 
-  Search, 
   CheckCircle,
   AlertCircle,
   RefreshCw,
@@ -23,26 +21,40 @@ import {
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
+import type { MeetingStatus } from "@/types";
 
-// Processing steps - server-side processing, we just show progress
-const STEPS = [
-  { key: "uploading", label: "Uploading", icon: Upload },
+// Processing steps matching the new statuses
+const STEPS: { key: MeetingStatus; label: string; icon: typeof Upload }[] = [
+  { key: "queued", label: "Queued", icon: Upload },
+  { key: "converting", label: "Converting Audio", icon: FileAudio },
   { key: "transcribing", label: "Transcribing", icon: FileText },
-  { key: "summarizing", label: "Analyzing", icon: Brain },
-  { key: "actions", label: "Extracting Tasks", icon: ListChecks },
-  { key: "indexing", label: "Finalizing", icon: Search },
 ];
+
+// Get step index from status
+function getStepIndex(status: MeetingStatus): number {
+  switch (status) {
+    case 'uploading':
+    case 'queued':
+      return 0;
+    case 'converting':
+      return 1;
+    case 'transcribing':
+      return 2;
+    case 'ready':
+      return STEPS.length; // All complete
+    default:
+      return 0;
+  }
+}
 
 export default function ProcessingScreen() {
   const router = useRouter();
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
   const { data: meeting, refetch } = useMeetingDetails(meetingId || null);
-  const { retryProcessing, triggerProcessing } = useMeetings();
+  const { retryProcessing } = useMeetings();
 
   const spinAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const [estimatedStep, setEstimatedStep] = useState(0);
-  const processingTriggeredRef = useRef(false);
 
   // Continuous spinner animation
   useEffect(() => {
@@ -80,48 +92,6 @@ export default function ProcessingScreen() {
     return () => pulse.stop();
   }, [pulseAnim]);
 
-  // Trigger processing when screen loads (if meeting is in processing state)
-  useEffect(() => {
-    const triggerIfNeeded = async () => {
-      if (
-        meeting?.status === 'processing' &&
-        meeting?.audio_path &&
-        !processingTriggeredRef.current
-      ) {
-        processingTriggeredRef.current = true;
-        console.log('[Processing] Triggering server-side processing for:', meetingId);
-        
-        try {
-          await triggerProcessing(meeting.id);
-        } catch (err) {
-          console.error('[Processing] Failed to trigger processing:', err);
-          // Processing will continue in background even if trigger call fails
-        }
-      }
-    };
-
-    triggerIfNeeded();
-  }, [meeting?.status, meeting?.audio_path, meeting?.id, meetingId, triggerProcessing]);
-
-  // Simulate progress through steps while processing (for UI feedback)
-  useEffect(() => {
-    if (meeting?.status === 'processing') {
-      const interval = setInterval(() => {
-        setEstimatedStep(prev => {
-          // Slowly progress through steps, but don't complete until status changes
-          if (prev < STEPS.length - 1) {
-            return prev + 1;
-          }
-          return prev;
-        });
-      }, 15000); // Move to next step every 15 seconds
-
-      return () => clearInterval(interval);
-    } else if (meeting?.status === 'ready') {
-      setEstimatedStep(STEPS.length);
-    }
-  }, [meeting?.status]);
-
   // Navigate to meeting when ready
   useEffect(() => {
     if (meeting?.status === "ready") {
@@ -140,9 +110,6 @@ export default function ProcessingScreen() {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-
-    setEstimatedStep(0);
-    processingTriggeredRef.current = false;
 
     try {
       await retryProcessing(meetingId);
@@ -164,9 +131,27 @@ export default function ProcessingScreen() {
     outputRange: ["0deg", "360deg"],
   });
 
-  const currentStep = meeting?.status === 'ready' ? STEPS.length : estimatedStep;
+  const currentStep = meeting?.status ? getStepIndex(meeting.status) : 0;
   const isFailed = meeting?.status === "failed";
   const isComplete = meeting?.status === "ready";
+
+  // Get status label
+  const getStatusLabel = () => {
+    switch (meeting?.status) {
+      case 'queued':
+        return 'Queued for processing';
+      case 'converting':
+        return 'Converting audio to MP3';
+      case 'transcribing':
+        return 'Transcribing with AssemblyAI';
+      case 'ready':
+        return 'Processing complete!';
+      case 'failed':
+        return 'Processing failed';
+      default:
+        return 'Processing...';
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -212,7 +197,7 @@ export default function ProcessingScreen() {
                 {isComplete ? (
                   <CheckCircle size={48} color={Colors.success} />
                 ) : (
-                  <Brain size={48} color={Colors.accentLight} />
+                  <FileAudio size={48} color={Colors.accentLight} />
                 )}
               </View>
             </View>
@@ -221,9 +206,7 @@ export default function ProcessingScreen() {
               {isComplete ? "Processing Complete!" : "Processing Meeting"}
             </Text>
             <Text style={styles.subtitle}>
-              {isComplete
-                ? "Your meeting is ready to view"
-                : "AI is transcribing and analyzing your meeting"}
+              {getStatusLabel()}
             </Text>
 
             <View style={styles.steps}>
@@ -266,7 +249,7 @@ export default function ProcessingScreen() {
             </View>
 
             <Text style={styles.hint}>
-              Processing happens on our servers using AssemblyAI
+              Audio converted via CloudConvert, transcribed with AssemblyAI
             </Text>
           </>
         )}
@@ -319,7 +302,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "700" as const,
+    fontWeight: "700",
     color: Colors.text,
     marginBottom: 8,
     textAlign: "center",
@@ -373,7 +356,7 @@ const styles = StyleSheet.create({
   },
   stepLabelActive: {
     color: Colors.accentLight,
-    fontWeight: "600" as const,
+    fontWeight: "600",
   },
   failedIcon: {
     width: 120,
@@ -406,7 +389,7 @@ const styles = StyleSheet.create({
   },
   retryButtonText: {
     fontSize: 16,
-    fontWeight: "600" as const,
+    fontWeight: "600",
     color: Colors.text,
   },
   viewAnywayButton: {

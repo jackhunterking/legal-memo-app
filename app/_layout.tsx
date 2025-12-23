@@ -6,8 +6,6 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
-import { MeetingTypeProvider } from "@/contexts/MeetingTypeContext";
-import { ContactProvider } from "@/contexts/ContactContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -28,12 +26,9 @@ function RootLayoutNav() {
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="auth" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="consent" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="recording" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="processing" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="meeting/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="contact/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="add-contact" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="edit-meeting" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="search" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="+not-found" options={{ title: "Not Found" }} />
@@ -50,14 +45,10 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <MeetingTypeProvider>
-            <MeetingProvider>
-              <ContactProvider>
-                <StatusBar style="light" />
-                <RootLayoutNav />
-              </ContactProvider>
-            </MeetingProvider>
-          </MeetingTypeProvider>
+          <MeetingProvider>
+            <StatusBar style="light" />
+            <RootLayoutNav />
+          </MeetingProvider>
         </AuthProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>

@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import type { Meeting } from "@/types";
+import { formatDuration } from "@/types";
 
 export default function SearchScreen() {
   const router = useRouter();
@@ -26,15 +27,8 @@ export default function SearchScreen() {
     
     const searchTerm = query.toLowerCase();
     return meetings.filter((meeting) => {
-      const title = (meeting.title_override || meeting.auto_title).toLowerCase();
-      const clientName = meeting.client_name?.toLowerCase() || "";
-      const meetingType = meeting.meeting_type?.name?.toLowerCase() || "";
-      
-      return (
-        title.includes(searchTerm) ||
-        clientName.includes(searchTerm) ||
-        meetingType.includes(searchTerm)
-      );
+      const title = meeting.title.toLowerCase();
+      return title.includes(searchTerm);
     });
   }, [query, meetings]);
 
@@ -85,7 +79,7 @@ export default function SearchScreen() {
           <Search size={48} color={Colors.surfaceLight} />
           <Text style={styles.emptyTitle}>Search Meetings</Text>
           <Text style={styles.emptySubtitle}>
-            Search by title, client name, or meeting type
+            Search by meeting title
           </Text>
         </View>
       ) : results.length === 0 ? (
@@ -101,7 +95,6 @@ export default function SearchScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.resultsList}
           renderItem={({ item }) => {
-            const title = item.title_override || item.auto_title;
             const date = new Date(item.created_at);
             
             return (
@@ -114,10 +107,10 @@ export default function SearchScreen() {
                 </View>
                 <View style={styles.resultContent}>
                   <Text style={styles.resultTitle} numberOfLines={1}>
-                    {title}
+                    {item.title}
                   </Text>
                   <Text style={styles.resultMeta}>
-                    {date.toLocaleDateString()} • {item.meeting_type?.name || 'Unknown'}
+                    {date.toLocaleDateString()} • {formatDuration(item.duration_seconds)}
                   </Text>
                 </View>
                 <ChevronRight size={20} color={Colors.textMuted} />

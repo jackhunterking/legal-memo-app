@@ -17,7 +17,7 @@ import Colors from "@/constants/colors";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { createInstantMeeting, isCreating } = useMeetings();
+  const { createMeeting, isCreating } = useMeetings();
   useAuth();
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -61,16 +61,14 @@ export default function HomeScreen() {
     ]).start();
 
     try {
-      const meeting = await createInstantMeeting();
+      const meeting = await createMeeting();
       router.push({ pathname: "/recording", params: { meetingId: meeting.id } });
-    } catch (err: any) {
-      const errorMessage = err?.message || JSON.stringify(err);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("[Home] Failed to create meeting:", errorMessage);
       alert(`Failed to start recording: ${errorMessage}`);
     }
   };
-
-
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -121,7 +119,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 28,
-    fontWeight: "700" as const,
+    fontWeight: "700",
     color: Colors.text,
     letterSpacing: -0.5,
     textAlign: "center",

@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Pause, Play, Square, Mic, ChevronLeft } from "lucide-react-native";
+import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import {
   useAudioRecorder,
@@ -26,13 +26,13 @@ import Colors from "@/constants/colors";
 export default function RecordingScreen() {
   const router = useRouter();
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
-  const { finalizeUpload, updateMeeting } = useMeetings();
+  const { uploadAudio, updateMeeting } = useMeetings();
   const { user } = useAuth();
 
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   const hasStartedRecording = useRef(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -55,7 +55,7 @@ export default function RecordingScreen() {
       console.log("[Recording] Starting recording...");
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
-      setStartedAt(new Date().toISOString());
+      setRecordedAt(new Date().toISOString());
       console.log("[Recording] Recording started");
     } catch (err) {
       console.error("[Recording] Start error:", err);
@@ -70,6 +70,7 @@ export default function RecordingScreen() {
     startRecording();
   }, [startRecording]);
 
+  // Pulse animation for recording indicator
   useEffect(() => {
     if (recorderState.isRecording && !isPaused) {
       const pulse = Animated.loop(
@@ -91,6 +92,7 @@ export default function RecordingScreen() {
     }
   }, [recorderState.isRecording, isPaused, pulseAnim]);
 
+  // Timer
   useEffect(() => {
     if (recorderState.isRecording && !isPaused) {
       timerRef.current = setInterval(() => {
@@ -148,10 +150,9 @@ export default function RecordingScreen() {
   };
 
   const performStop = async () => {
-    if (!meetingId) return;
+    if (!meetingId || !user?.id) return;
 
     setIsUploading(true);
-    const endedAt = new Date().toISOString();
 
     try {
       console.log("[Recording] Stopping recording...");
@@ -163,28 +164,22 @@ export default function RecordingScreen() {
         throw new Error("No recording URI");
       }
 
-      await updateMeeting({
-        meetingId,
-        updates: { status: "uploading" },
-      });
-
+      // Get the audio blob
       const response = await fetch(uri);
       const blob = await response.blob();
       
-      // Determine file extension, content type, and audio format based on platform
+      // Determine file format based on platform
       // Web browsers typically record in WebM format, native apps use M4A
       let fileExtension: string;
       let contentType: string;
-      let audioFormat: 'webm' | 'm4a';
+      let audioFormat: string;
       
       if (Platform.OS === "web") {
-        // Web browsers record in WebM format (especially Chrome)
-        // Use the blob's actual type if available, fallback to webm
         contentType = blob.type || "audio/webm";
         const isWebm = contentType.includes("webm") || contentType.includes("ogg");
         fileExtension = isWebm ? "webm" : "m4a";
         audioFormat = isWebm ? "webm" : "m4a";
-        console.log("[Recording] Web audio format:", contentType, "-> audioFormat:", audioFormat);
+        console.log("[Recording] Web audio format:", contentType, "->", audioFormat);
       } else {
         // Native (iOS/Android) uses M4A format
         contentType = "audio/mp4";
@@ -192,8 +187,12 @@ export default function RecordingScreen() {
         audioFormat = "m4a";
       }
       
-      const audioPath = `${user?.id}/${meetingId}/audio.${fileExtension}`;
+      // Upload path: user_id/meeting_id/audio.ext
+      const audioPath = `${user.id}/${meetingId}/audio.${fileExtension}`;
 
+      console.log("[Recording] Uploading to:", audioPath);
+
+      // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from("meeting-audio")
         .upload(audioPath, blob, {
@@ -201,24 +200,40 @@ export default function RecordingScreen() {
           upsert: true,
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error("[Recording] Upload error:", uploadError);
+        throw uploadError;
+      }
 
-      console.log("[Recording] Upload complete, triggering finalization with format:", audioFormat);
+      console.log("[Recording] Upload complete, triggering processing...");
 
-      // Finalize upload - this will trigger transcoding if format is webm
-      await finalizeUpload({
+      // Update meeting and trigger processing
+      await uploadAudio({
         meetingId,
         audioPath,
         audioFormat,
         durationSeconds: elapsedSeconds,
-        startedAt: startedAt || new Date().toISOString(),
-        endedAt,
+        recordedAt: recordedAt || new Date().toISOString(),
       });
 
+      // Navigate to processing screen
       router.replace({ pathname: "/processing", params: { meetingId } });
     } catch (err) {
       console.error("[Recording] Stop/upload error:", err);
       setIsUploading(false);
+      
+      // Update meeting status to failed
+      try {
+        await updateMeeting({
+          meetingId,
+          updates: { 
+            status: "failed", 
+            error_message: err instanceof Error ? err.message : "Upload failed" 
+          },
+        });
+      } catch (updateErr) {
+        console.error("[Recording] Failed to update meeting status:", updateErr);
+      }
       
       if (Platform.OS !== "web") {
         Alert.alert("Error", "Failed to save recording. Please try again.");
@@ -327,14 +342,14 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 22,
-    fontWeight: "700" as const,
+    fontWeight: "700",
     color: Colors.text,
     marginBottom: 20,
     letterSpacing: -0.3,
   },
   timer: {
     fontSize: 68,
-    fontWeight: "200" as const,
+    fontWeight: "200",
     color: Colors.text,
     fontVariant: ["tabular-nums"],
     marginBottom: 56,

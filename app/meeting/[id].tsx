@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,6 @@ import {
   TextInput,
   Modal,
   Share,
-  Switch,
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
@@ -26,112 +25,14 @@ import {
   Search,
   X,
   Clock,
-  DollarSign,
-  Plus,
   RefreshCw,
-  Loader,
   Share2,
-  ChevronDown,
-  User,
-  FileText,
-  Check,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
-import { useMeetingTypes } from "@/contexts/MeetingTypeContext";
-import { useContacts } from "@/contexts/ContactContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
-
-// Insights Bottom Sheet Component
-const InsightsBottomSheet = ({ visible, onClose, aiOutput }: any) => {
-  if (!aiOutput) return null;
-
-  const sections = [
-    {
-      title: "Key Facts",
-      items: aiOutput.key_facts_stated || [],
-      accessor: "fact",
-    },
-    {
-      title: "Legal Issues",
-      items: aiOutput.legal_issues_discussed || [],
-      accessor: "issue",
-    },
-    {
-      title: "Decisions Made",
-      items: aiOutput.decisions_made || [],
-      accessor: "decision",
-    },
-    {
-      title: "Risks & Concerns",
-      items: aiOutput.risks_or_concerns_raised || [],
-      accessor: "risk",
-    },
-    {
-      title: "Open Questions",
-      items: aiOutput.open_questions || [],
-      accessor: "question",
-    },
-  ];
-
-  const hasAnyContent = sections.some(section => section.items.length > 0);
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.bottomSheetOverlay}>
-        <Pressable style={styles.bottomSheetBackdrop} onPress={onClose} />
-        <View style={styles.bottomSheetContainer}>
-          <View style={styles.bottomSheetHandle} />
-          <View style={styles.bottomSheetHeader}>
-            <Text style={styles.bottomSheetTitle}>Meeting Insights</Text>
-            <Pressable onPress={onClose} style={styles.bottomSheetClose}>
-              <X size={24} color={Colors.text} />
-            </Pressable>
-          </View>
-          <ScrollView
-            style={styles.bottomSheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {hasAnyContent ? (
-              sections.map(
-                (section) =>
-                  section.items.length > 0 && (
-                    <View key={section.title} style={styles.insightSection}>
-                      <Text style={styles.insightSectionTitle}>
-                        {section.title}
-                      </Text>
-                      {section.items.map((item: any, index: number) => (
-                        <View key={index} style={styles.insightItem}>
-                          <Text style={styles.insightItemText}>
-                            • {item[section.accessor]}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  )
-              )
-            ) : (
-              <View style={styles.emptyInsightsContainer}>
-                <Text style={styles.emptyInsightsText}>
-                  No detailed insights are available for this meeting.
-                </Text>
-                <Text style={styles.emptyInsightsSubtext}>
-                  The meeting summary is available in the main view.
-                </Text>
-              </View>
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-};
+import { formatDuration, formatTimestamp, getStatusInfo } from "@/types";
 
 // Transcript Bottom Sheet Component
 const TranscriptBottomSheet = ({
@@ -139,49 +40,22 @@ const TranscriptBottomSheet = ({
   onClose,
   segments,
   onSeek,
-}: any) => {
+}: {
+  visible: boolean;
+  onClose: () => void;
+  segments?: Array<{ id: string; speaker: string; text: string; start_ms: number; end_ms: number }>;
+  onSeek?: (ms: number) => void;
+}) => {
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredSegments = useMemo(() => {
-    if (!segments || !searchQuery.trim()) return segments || [];
+  const filteredSegments = segments?.filter((segment) => {
+    if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
-    return segments.filter(
-      (segment: any) =>
-        segment.text.toLowerCase().includes(query) ||
-        (segment.speaker_name || segment.speaker_label)
-          .toLowerCase()
-          .includes(query)
-    );
-  }, [segments, searchQuery]);
-
-  const HighlightedText = ({ text }: { text: string }) => {
-    if (!searchQuery.trim()) {
-      return <Text style={styles.transcriptSegmentText}>{text}</Text>;
-    }
-
-    const parts = text.split(new RegExp(`(${searchQuery})`, "gi"));
-    return (
-      <Text style={styles.transcriptSegmentText}>
-        {parts.map((part, index) =>
-          part.toLowerCase() === searchQuery.toLowerCase() ? (
-            <Text key={index} style={styles.highlightedText}>
-              {part}
-            </Text>
-          ) : (
-            <Text key={index}>{part}</Text>
-          )
-        )}
-      </Text>
-    );
-  };
+    return segment.text.toLowerCase().includes(query) || segment.speaker.toLowerCase().includes(query);
+  }) || [];
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.bottomSheetOverlay}>
         <Pressable style={styles.bottomSheetBackdrop} onPress={onClose} />
         <View style={styles.bottomSheetContainer}>
@@ -209,14 +83,11 @@ const TranscriptBottomSheet = ({
             )}
           </View>
 
-          <ScrollView
-            style={styles.bottomSheetContent}
-            showsVerticalScrollIndicator={false}
-          >
+          <ScrollView style={styles.bottomSheetContent} showsVerticalScrollIndicator={false}>
             {filteredSegments.length > 0 ? (
-              filteredSegments.map((segment: any, index: number) => (
+              filteredSegments.map((segment) => (
                 <Pressable
-                  key={segment.id || index}
+                  key={segment.id}
                   style={styles.transcriptSegment}
                   onPress={() => {
                     if (onSeek) onSeek(segment.start_ms);
@@ -226,17 +97,10 @@ const TranscriptBottomSheet = ({
                   }}
                 >
                   <View style={styles.transcriptSegmentHeader}>
-                    <Text style={styles.transcriptSpeaker}>
-                      {segment.speaker_name || segment.speaker_label}
-                    </Text>
-                    <Text style={styles.transcriptTimestamp}>
-                      {Math.floor(segment.start_ms / 60000)}:
-                      {((segment.start_ms % 60000) / 1000)
-                        .toFixed(0)
-                        .padStart(2, "0")}
-                    </Text>
+                    <Text style={styles.transcriptSpeaker}>{segment.speaker}</Text>
+                    <Text style={styles.transcriptTimestamp}>{formatTimestamp(segment.start_ms)}</Text>
                   </View>
-                  <HighlightedText text={segment.text} />
+                  <Text style={styles.transcriptSegmentText}>{segment.text}</Text>
                 </Pressable>
               ))
             ) : (
@@ -251,135 +115,13 @@ const TranscriptBottomSheet = ({
   );
 };
 
-// Meeting Actions Bottom Sheet Component
-const MeetingActionsSheet = ({
-  visible,
-  onClose,
-  onEdit,
-  onShare,
-  onDelete,
-}: any) => {
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.bottomSheetOverlay}>
-        <Pressable style={styles.bottomSheetBackdrop} onPress={onClose} />
-        <View style={styles.actionsSheetContainer}>
-          <View style={styles.bottomSheetHandle} />
-          <View style={styles.actionsSheetHeader}>
-            <Text style={styles.bottomSheetTitle}>Actions</Text>
-            <Pressable onPress={onClose} style={styles.bottomSheetClose}>
-              <X size={24} color={Colors.text} />
-            </Pressable>
-          </View>
-
-          <View style={styles.actionsSheetContent}>
-            <Pressable
-              style={styles.actionSheetItem}
-              onPress={() => {
-                onClose();
-                setTimeout(onEdit, 300);
-              }}
-            >
-              <View style={styles.actionSheetIconWrapper}>
-                <Edit3 size={20} color={Colors.accentLight} />
-              </View>
-              <View style={styles.actionSheetTextContainer}>
-                <Text style={styles.actionSheetItemTitle}>Edit Meeting</Text>
-                <Text style={styles.actionSheetItemDescription}>
-                  Update meeting details and settings
-                </Text>
-              </View>
-            </Pressable>
-
-            <Pressable
-              style={styles.actionSheetItem}
-              onPress={() => {
-                onClose();
-                setTimeout(() => {
-                  onShare();
-                }, 0);
-              }}
-            >
-              <View style={styles.actionSheetIconWrapper}>
-                <Share2 size={20} color={Colors.accentLight} />
-              </View>
-              <View style={styles.actionSheetTextContainer}>
-                <Text style={styles.actionSheetItemTitle}>Share</Text>
-                <Text style={styles.actionSheetItemDescription}>
-                  Share meeting notes and summary
-                </Text>
-              </View>
-            </Pressable>
-
-            <View style={styles.actionSheetDivider} />
-
-            <Pressable
-              style={styles.actionSheetItem}
-              onPress={() => {
-                onClose();
-                setTimeout(onDelete, 300);
-              }}
-            >
-              <View style={[styles.actionSheetIconWrapper, styles.actionSheetIconDanger]}>
-                <Trash2 size={20} color={Colors.error} />
-              </View>
-              <View style={styles.actionSheetTextContainer}>
-                <Text style={[styles.actionSheetItemTitle, styles.actionSheetItemTitleDanger]}>
-                  Delete Meeting
-                </Text>
-                <Text style={styles.actionSheetItemDescription}>
-                  Permanently remove this meeting
-                </Text>
-              </View>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-// Floating Action Button Component
-const FloatingActionButton = ({ onPress, audioBarHeight }: any) => {
-  return (
-    <Pressable
-      style={[
-        styles.fabMain,
-        { bottom: audioBarHeight + 16, right: 16 },
-      ]}
-      onPress={onPress}
-    >
-      <Plus size={28} color={Colors.background} />
-    </Pressable>
-  );
-};
-
 export default function MeetingDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: meeting, isLoading } = useMeetingDetails(id || null);
-  const { deleteMeeting, retryTranscoding, isTranscoding, updateMeetingDetails } = useMeetings();
-  const { meetingTypes } = useMeetingTypes();
-  const { contacts } = useContacts();
+  const { data: meeting, isLoading, refetch } = useMeetingDetails(id || null);
+  const { deleteMeeting, retryProcessing, updateMeeting, isRetrying } = useMeetings();
 
-  const [showInsights, setShowInsights] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
-  const [showActionsSheet, setShowActionsSheet] = useState(false);
-  const [showContactDropdown, setShowContactDropdown] = useState(false);
-  const [showMeetingTypeDropdown, setShowMeetingTypeDropdown] = useState(false);
-  const [showTimeEditor, setShowTimeEditor] = useState(false);
-  const [editingTimeHours, setEditingTimeHours] = useState('');
-  const [editingTimeMinutes, setEditingTimeMinutes] = useState('');
-  const [showBillableEditor, setShowBillableEditor] = useState(false);
-  const [editingBillableHours, setEditingBillableHours] = useState('');
-  const [editingBillableMinutes, setEditingBillableMinutes] = useState('');
-  const [editingHourlyRate, setEditingHourlyRate] = useState('');
-
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
@@ -388,13 +130,12 @@ export default function MeetingDetailScreen() {
   const blobUrlRef = useRef<string | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioLoadError, setAudioLoadError] = useState(false);
-  const [audioErrorMessage, setAudioErrorMessage] = useState<string | null>(
-    null
-  );
+  const [audioErrorMessage, setAudioErrorMessage] = useState<string | null>(null);
   const [progressBarWidth, setProgressBarWidth] = useState(0);
 
-  const title = meeting?.title_override || meeting?.auto_title || "Meeting";
-  const aiOutput = meeting?.ai_output;
+  const title = meeting?.title || "Meeting";
+  const transcript = meeting?.transcript;
+  const segments = meeting?.segments;
 
   // Audio playback
   const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
@@ -416,20 +157,19 @@ export default function MeetingDetailScreen() {
   }, []);
 
   const loadAudio = useCallback(async () => {
-    if (!meeting?.audio_path || soundRef.current) {
-      console.log("[AudioPlayer] Skipping load - path:", meeting?.audio_path, "soundRef exists:", !!soundRef.current);
-      return;
-    }
+    // Prefer MP3 if available, fallback to raw audio
+    const audioPath = meeting?.mp3_audio_path || meeting?.raw_audio_path;
+    if (!audioPath || soundRef.current) return;
 
     try {
-      console.log("[AudioPlayer] Loading audio from path:", meeting.audio_path);
+      console.log("[AudioPlayer] Loading audio from path:", audioPath);
       setIsAudioLoading(true);
       setAudioLoadError(false);
       setAudioErrorMessage(null);
 
       const { data: audioBlob, error: downloadError } = await supabase.storage
         .from("meeting-audio")
-        .download(meeting.audio_path);
+        .download(audioPath);
 
       if (downloadError || !audioBlob) {
         console.error("[AudioPlayer] Download error:", downloadError);
@@ -437,38 +177,8 @@ export default function MeetingDetailScreen() {
         setAudioErrorMessage(downloadError?.message || "Could not download audio");
         return;
       }
-      
-      console.log("[AudioPlayer] Audio downloaded, size:", audioBlob.size, "type:", audioBlob.type);
 
-      const blobType = audioBlob.type || "";
-      const filePath = meeting.audio_path.toLowerCase();
-
-      let isActuallyWebm = false;
-      try {
-        const headerBytes = new Uint8Array(
-          await audioBlob.slice(0, 4).arrayBuffer()
-        );
-        isActuallyWebm =
-          headerBytes[0] === 0x1a &&
-          headerBytes[1] === 0x45 &&
-          headerBytes[2] === 0xdf &&
-          headerBytes[3] === 0xa3;
-      } catch {
-        // Ignore
-      }
-
-      const isWebmFormat =
-        isActuallyWebm || blobType.includes("webm") || filePath.endsWith(".webm");
-      const isOggFormat =
-        blobType.includes("ogg") || filePath.endsWith(".ogg");
-
-      if (Platform.OS === "ios" && (isWebmFormat || isOggFormat)) {
-        setAudioLoadError(true);
-        setAudioErrorMessage(
-          "This recording was made on web and cannot be played on iOS. Open in web browser to listen."
-        );
-        return;
-      }
+      console.log("[AudioPlayer] Audio downloaded, size:", audioBlob.size);
 
       let audioUri: string;
 
@@ -508,20 +218,14 @@ export default function MeetingDetailScreen() {
     } catch (error) {
       console.error("[AudioPlayer] Failed to load audio:", error);
       setAudioLoadError(true);
-      setAudioErrorMessage(
-        error instanceof Error ? error.message : "Could not play audio"
-      );
+      setAudioErrorMessage(error instanceof Error ? error.message : "Could not play audio");
     } finally {
       setIsAudioLoading(false);
     }
-  }, [meeting?.audio_path, onPlaybackStatusUpdate]);
+  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, onPlaybackStatusUpdate]);
 
   useEffect(() => {
-    const canLoadAudio =
-      meeting?.audio_path &&
-      meeting?.status === "ready" &&
-      meeting?.audio_format !== "transcoding" &&
-      meeting?.audio_format !== "failed";
+    const canLoadAudio = (meeting?.mp3_audio_path || meeting?.raw_audio_path) && meeting?.status === "ready";
 
     if (canLoadAudio) {
       loadAudio();
@@ -537,7 +241,7 @@ export default function MeetingDetailScreen() {
         blobUrlRef.current = null;
       }
     };
-  }, [meeting?.audio_path, meeting?.status, meeting?.audio_format, loadAudio]);
+  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, meeting?.status, loadAudio]);
 
   const handlePlayPause = async () => {
     if (!soundRef.current) {
@@ -595,18 +299,6 @@ export default function MeetingDetailScreen() {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const formatDuration = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.ceil((seconds % 3600) / 60);
-    if (hrs > 0) return `${hrs}h ${mins}m`;
-    return `${mins} min`;
-  };
-
-  const formatBillable = (seconds: number, rate: number) => {
-    const hours = seconds / 3600;
-    return `$${(hours * rate).toFixed(2)}`;
-  };
-
   const progress = durationMillis > 0 ? (positionMillis / durationMillis) * 100 : 0;
 
   const handleDelete = async () => {
@@ -637,21 +329,24 @@ export default function MeetingDetailScreen() {
     }
   };
 
-  const handleShare = async () => {
-    // Haptic feedback when share is triggered
+  const handleRetry = async () => {
+    if (!id) return;
     try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {
-      // Haptics not available (web)
+      await retryProcessing(id);
+      await refetch();
+    } catch (err) {
+      console.error("[MeetingDetail] Retry error:", err);
     }
+  };
 
+  const handleShare = async () => {
     const shareText = `
 ${title}
 Date: ${new Date(meeting?.created_at || "").toLocaleDateString()}
 Duration: ${formatDuration(meeting?.duration_seconds || 0)}
 
 Summary:
-${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
+${transcript?.summary || "No summary available"}
     `.trim();
 
     try {
@@ -659,55 +354,12 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(shareText);
           alert("Meeting notes copied to clipboard!");
-        } else {
-          // Fallback for older browsers
-          const textArea = document.createElement("textarea");
-          textArea.value = shareText;
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand("copy");
-          document.body.removeChild(textArea);
-          alert("Meeting notes copied to clipboard!");
         }
       } else {
-        // Check if Share is available
-        if (!Share || typeof Share.share !== "function") {
-          Alert.alert("Error", "Sharing is not available on this device.");
-          return;
-        }
-
-        // Ensure we have valid content to share
-        if (!shareText || shareText.trim().length === 0) {
-          Alert.alert("Error", "No content available to share.");
-          return;
-        }
-
-        // Use native Share API
-        const shareOptions: { message: string; title?: string; url?: string } = {
-          message: shareText,
-        };
-
-        // On iOS, title is optional but recommended
-        if (Platform.OS === "ios" && title) {
-          shareOptions.title = title;
-        }
-
-        const result = await Share.share(shareOptions);
-
-        // Log result for debugging (Share.share() resolves even when user cancels)
-        if (result.action) {
-          console.log("[Share] Action:", result.action);
-          if (result.activityType) {
-            console.log("[Share] Activity type:", result.activityType);
-          }
-        }
+        await Share.share({ message: shareText, title });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[Share] Error:", error);
-      Alert.alert(
-        "Share Error",
-        error?.message || "Failed to share meeting notes. Please try again."
-      );
     }
   };
 
@@ -721,17 +373,8 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
     );
   }
 
-  // Audio bar should show if meeting has audio and is ready, even if transcoding in progress
-  const shouldShowAudioBar = !!(meeting.audio_path && meeting.status === "ready");
-  const audioBarHeight = shouldShowAudioBar ? 80 : 0;
-  
-  // Log for debugging
-  console.log("[MeetingDetail] Audio bar state:", {
-    audioPath: meeting.audio_path,
-    status: meeting.status,
-    audioFormat: meeting.audio_format,
-    shouldShowAudioBar,
-  });
+  const shouldShowAudioBar = !!(meeting.mp3_audio_path || meeting.raw_audio_path) && meeting.status === "ready";
+  const statusInfo = getStatusInfo(meeting.status);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -747,410 +390,84 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
             {title}
           </Text>
         </View>
-        <View style={styles.headerSpacer} />
+        <View style={styles.headerActions}>
+          <Pressable style={styles.headerActionButton} onPress={handleShare}>
+            <Share2 size={20} color={Colors.text} />
+          </Pressable>
+          <Pressable style={styles.headerActionButton} onPress={handleDelete}>
+            <Trash2 size={20} color={Colors.error} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Scrollable Content */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Meeting Details Section */}
-        <View style={styles.detailsSection}>
-          {/* Time Logged */}
-          <View style={styles.detailRow}>
-            <View style={styles.detailIconWrapper}>
-              <Clock size={20} color={Colors.accentLight} />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Time Logged</Text>
-              <Text style={styles.detailValue}>{formatDuration(meeting.duration_seconds)}</Text>
-            </View>
-            <Pressable
-              style={styles.actionEditButtonNew}
-              onPress={() => {
-                const hours = Math.floor(meeting.duration_seconds / 3600);
-                const minutes = Math.floor((meeting.duration_seconds % 3600) / 60);
-                setEditingTimeHours(hours.toString());
-                setEditingTimeMinutes(minutes.toString());
-                setShowTimeEditor(true);
-                setShowContactDropdown(false);
-                setShowMeetingTypeDropdown(false);
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-              }}
-            >
-              <Text style={styles.actionEditButtonText}>Edit</Text>
-            </Pressable>
+        {/* Status Banner (if not ready) */}
+        {meeting.status !== 'ready' && (
+          <View style={[styles.statusBanner, { backgroundColor: `${statusInfo.color}20` }]}>
+            <Text style={[styles.statusBannerText, { color: statusInfo.color }]}>
+              {statusInfo.label}
+            </Text>
+            {meeting.status === 'failed' && (
+              <Pressable style={styles.retryBannerButton} onPress={handleRetry} disabled={isRetrying}>
+                <RefreshCw size={16} color={Colors.accentLight} />
+                <Text style={styles.retryBannerText}>Retry</Text>
+              </Pressable>
+            )}
           </View>
+        )}
 
-          {showTimeEditor && (
-            <View style={styles.timeEditorContainer}>
-              <Text style={styles.timeEditorLabel}>Edit Time Logged</Text>
-              <View style={styles.timeEditorInputRow}>
-                <View style={styles.timeEditorInputGroup}>
-                  <TextInput
-                    style={styles.timeEditorInput}
-                    value={editingTimeHours}
-                    onChangeText={setEditingTimeHours}
-                    keyboardType="number-pad"
-                    placeholder="0"
-                    placeholderTextColor={Colors.textMuted}
-                    maxLength={3}
-                  />
-                  <Text style={styles.timeEditorUnit}>hours</Text>
-                </View>
-                <View style={styles.timeEditorInputGroup}>
-                  <TextInput
-                    style={styles.timeEditorInput}
-                    value={editingTimeMinutes}
-                    onChangeText={setEditingTimeMinutes}
-                    keyboardType="number-pad"
-                    placeholder="0"
-                    placeholderTextColor={Colors.textMuted}
-                    maxLength={2}
-                  />
-                  <Text style={styles.timeEditorUnit}>min</Text>
-                </View>
-              </View>
-              <View style={styles.timeEditorActions}>
-                <Pressable
-                  style={styles.timeEditorCancelButton}
-                  onPress={() => {
-                    setShowTimeEditor(false);
-                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }}
-                >
-                  <Text style={styles.timeEditorCancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.timeEditorSaveButton}
-                  onPress={async () => {
-                    const hours = parseInt(editingTimeHours) || 0;
-                    const minutes = parseInt(editingTimeMinutes) || 0;
-                    const newDurationSeconds = hours * 3600 + minutes * 60;
-                    
-                    if (newDurationSeconds > 0 && id) {
-                      await updateMeetingDetails(id, { 
-                        duration_seconds: newDurationSeconds,
-                        billable_seconds: meeting.billable ? newDurationSeconds : meeting.billable_seconds
-                      });
-                      setShowTimeEditor(false);
-                      if (Platform.OS !== 'web') {
-                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                      }
-                    }
-                  }}
-                >
-                  <Text style={styles.timeEditorSaveText}>Save</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-
-          {/* Contact Selector */}
-          <Pressable
-            style={styles.detailRow}
-            onPress={() => {
-              setShowContactDropdown(!showContactDropdown);
-              setShowMeetingTypeDropdown(false);
-              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-          >
-            <View style={styles.detailIconWrapper}>
-              <User size={20} color={Colors.accentLight} />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Contact</Text>
-              <Text style={styles.detailValue}>
-                {meeting.primary_contact_id
-                  ? contacts.find(c => c.id === meeting.primary_contact_id)?.full_name || 'Unknown Contact'
-                  : meeting.client_name || 'Not assigned'}
-              </Text>
-            </View>
-            <ChevronDown size={20} color={Colors.textMuted} style={{ transform: [{ rotate: showContactDropdown ? '180deg' : '0deg' }] }} />
-          </Pressable>
-
-          {showContactDropdown && (
-            <View style={styles.dropdownContainer}>
-              <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                <Pressable
-                  style={styles.dropdownItem}
-                  onPress={async () => {
-                    if (id) {
-                      await updateMeetingDetails(id, { primary_contact_id: null, client_name: null });
-                      setShowContactDropdown(false);
-                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
-                  }}
-                >
-                  <Text style={styles.dropdownItemText}>None</Text>
-                  {!meeting.primary_contact_id && !meeting.client_name && (
-                    <Check size={16} color={Colors.accentLight} />
-                  )}
-                </Pressable>
-                {contacts.map((contact) => (
-                  <Pressable
-                    key={contact.id}
-                    style={styles.dropdownItem}
-                    onPress={async () => {
-                      if (id) {
-                        await updateMeetingDetails(id, { primary_contact_id: contact.id, client_name: contact.full_name });
-                        setShowContactDropdown(false);
-                        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                  >
-                    <View style={styles.dropdownItemInfo}>
-                      <Text style={styles.dropdownItemText}>{contact.full_name}</Text>
-                      {contact.company && (
-                        <Text style={styles.dropdownItemSubtext}>{contact.company}</Text>
-                      )}
-                    </View>
-                    {meeting.primary_contact_id === contact.id && (
-                      <Check size={16} color={Colors.accentLight} />
-                    )}
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* Meeting Type */}
-          <Pressable
-            style={styles.detailRow}
-            onPress={() => {
-              setShowMeetingTypeDropdown(!showMeetingTypeDropdown);
-              setShowContactDropdown(false);
-              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-          >
-            <View style={styles.detailIconWrapper}>
-              <FileText size={20} color={Colors.accentLight} />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Meeting Type</Text>
-              <View style={styles.meetingTypeDisplay}>
-                {meeting.meeting_type && (
-                  <View style={[styles.meetingTypeColorDot, { backgroundColor: meeting.meeting_type.color }]} />
-                )}
-                <Text style={styles.detailValue}>{meeting.meeting_type?.name || 'Not set'}</Text>
-              </View>
-            </View>
-            <ChevronDown size={20} color={Colors.textMuted} style={{ transform: [{ rotate: showMeetingTypeDropdown ? '180deg' : '0deg' }] }} />
-          </Pressable>
-
-          {showMeetingTypeDropdown && (
-            <View style={styles.dropdownContainer}>
-              <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                {meetingTypes.map((type) => (
-                  <Pressable
-                    key={type.id}
-                    style={styles.dropdownItem}
-                    onPress={async () => {
-                      if (id) {
-                        await updateMeetingDetails(id, { meeting_type_id: type.id });
-                        setShowMeetingTypeDropdown(false);
-                        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                  >
-                    <View style={styles.dropdownItemContent}>
-                      <View style={[styles.meetingTypeColorDot, { backgroundColor: type.color }]} />
-                      <Text style={styles.dropdownItemText}>{type.name}</Text>
-                    </View>
-                    {meeting.meeting_type_id === type.id && (
-                      <Check size={16} color={Colors.accentLight} />
-                    )}
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* Billable Toggle */}
-          <View style={[styles.detailRow, styles.lastDetailRow]}>
-            <View style={styles.detailIconWrapper}>
-              <DollarSign size={20} color={Colors.accentLight} />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Billable</Text>
-            </View>
-            <View style={styles.billableToggleContainer}>
-              <Text style={[styles.billableToggleLabel, !meeting.billable && styles.billableToggleLabelActive]}>No</Text>
-              <Switch
-                value={meeting.billable}
-                onValueChange={async (value) => {
-                  if (id) {
-                    await updateMeetingDetails(id, { billable: value });
-                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                }}
-                trackColor={{ false: Colors.border, true: Colors.success }}
-                thumbColor={Colors.background}
-              />
-              <Text style={[styles.billableToggleLabel, meeting.billable && styles.billableToggleLabelActive]}>Yes</Text>
-            </View>
+        {/* Meeting Details */}
+        <View style={styles.detailsCard}>
+          <View style={styles.detailRow}>
+            <Clock size={18} color={Colors.textMuted} />
+            <Text style={styles.detailText}>
+              {new Date(meeting.created_at).toLocaleDateString()} at{" "}
+              {new Date(meeting.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Duration:</Text>
+            <Text style={styles.detailText}>{formatDuration(meeting.duration_seconds)}</Text>
           </View>
         </View>
+
         {/* Summary Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Summary</Text>
-          {aiOutput ? (
-            <>
-              {aiOutput.meeting_overview.topics.length > 0 && (
-                <View style={styles.topicsRow}>
-                  {aiOutput.meeting_overview.topics.map(
-                    (topic: string, i: number) => (
-                      <View key={i} style={styles.topicChip}>
-                        <Text style={styles.topicChipText}>{topic}</Text>
-                      </View>
-                    )
-                  )}
-                </View>
-              )}
-              <Text style={styles.summaryText}>
-                {aiOutput.meeting_overview.one_sentence_summary}
-              </Text>
-              <Pressable
-                style={styles.viewDetailsLink}
-                onPress={() => setShowInsights(true)}
-              >
-                <Text style={styles.viewDetailsLinkText}>View Details</Text>
-                <ChevronDown
-                  size={16}
-                  color={Colors.accentLight}
-                  style={{ transform: [{ rotate: "-90deg" }] }}
-                />
-              </Pressable>
-            </>
+          {transcript?.summary ? (
+            <Text style={styles.summaryText}>{transcript.summary}</Text>
           ) : (
             <Text style={styles.noDataText}>
-              {meeting.status === "processing"
+              {meeting.status === "transcribing" || meeting.status === "converting"
                 ? "Summary is being generated..."
+                : meeting.status === "failed"
+                ? "Processing failed. Tap retry above."
                 : "No summary available"}
             </Text>
           )}
         </View>
 
-        {/* Billing Card */}
-        {meeting.billable && (
+        {/* Transcript Preview */}
+        {transcript?.full_text && (
           <View style={styles.card}>
-            <View style={styles.billingRow}>
-              <View style={styles.billingIconWrapper}>
-                <DollarSign size={20} color={Colors.success} />
-              </View>
-              <View style={styles.billingContent}>
-                <Text style={styles.billingLabel}>Billable Amount</Text>
-                <Text style={styles.billingAmount}>
-                  {formatBillable(
-                    meeting.billable_seconds,
-                    meeting.hourly_rate_snapshot
-                  )}
-                </Text>
-                <Text style={styles.billingDetail}>
-                  {formatDuration(meeting.billable_seconds)} @ $
-                  {meeting.hourly_rate_snapshot}/hr
-                </Text>
-              </View>
-              <Pressable
-                style={styles.actionEditButtonNew}
-                onPress={() => {
-                  const hours = Math.floor(meeting.billable_seconds / 3600);
-                  const minutes = Math.floor((meeting.billable_seconds % 3600) / 60);
-                  setEditingBillableHours(hours.toString());
-                  setEditingBillableMinutes(minutes.toString());
-                  setEditingHourlyRate(meeting.hourly_rate_snapshot.toString());
-                  setShowBillableEditor(true);
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                }}
-              >
-                <Text style={styles.actionEditButtonText}>Edit</Text>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Transcript</Text>
+              <Pressable onPress={() => setShowTranscript(true)}>
+                <Text style={styles.viewAllLink}>View Full</Text>
               </Pressable>
             </View>
+            <Text style={styles.transcriptPreview} numberOfLines={4}>
+              {transcript.full_text}
+            </Text>
+          </View>
+        )}
 
-            {showBillableEditor && (
-              <View style={styles.billableEditorContainer}>
-                <Text style={styles.billableEditorLabel}>Edit Billable Amount</Text>
-                
-                <Text style={styles.billableEditorSectionLabel}>Billable Time</Text>
-                <View style={styles.timeEditorInputRow}>
-                  <View style={styles.timeEditorInputGroup}>
-                    <TextInput
-                      style={styles.timeEditorInput}
-                      value={editingBillableHours}
-                      onChangeText={setEditingBillableHours}
-                      keyboardType="number-pad"
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      maxLength={3}
-                    />
-                    <Text style={styles.timeEditorUnit}>hours</Text>
-                  </View>
-                  <View style={styles.timeEditorInputGroup}>
-                    <TextInput
-                      style={styles.timeEditorInput}
-                      value={editingBillableMinutes}
-                      onChangeText={setEditingBillableMinutes}
-                      keyboardType="number-pad"
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      maxLength={2}
-                    />
-                    <Text style={styles.timeEditorUnit}>min</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.billableEditorSectionLabel}>Hourly Rate</Text>
-                <View style={styles.hourlyRateInputContainer}>
-                  <Text style={styles.hourlyRateDollarSign}>$</Text>
-                  <TextInput
-                    style={styles.hourlyRateInput}
-                    value={editingHourlyRate}
-                    onChangeText={setEditingHourlyRate}
-                    keyboardType="number-pad"
-                    placeholder="0"
-                    placeholderTextColor={Colors.textMuted}
-                    maxLength={5}
-                  />
-                  <Text style={styles.hourlyRateUnit}>/hr</Text>
-                </View>
-
-                <View style={styles.timeEditorActions}>
-                  <Pressable
-                    style={styles.timeEditorCancelButton}
-                    onPress={() => {
-                      setShowBillableEditor(false);
-                      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
-                  >
-                    <Text style={styles.timeEditorCancelText}>Cancel</Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.timeEditorSaveButton}
-                    onPress={async () => {
-                      const hours = parseInt(editingBillableHours) || 0;
-                      const minutes = parseInt(editingBillableMinutes) || 0;
-                      const newBillableSeconds = hours * 3600 + minutes * 60;
-                      const newRate = parseInt(editingHourlyRate) || 0;
-                      
-                      if (newBillableSeconds >= 0 && newRate > 0 && id) {
-                        await updateMeetingDetails(id, { 
-                          billable_seconds: newBillableSeconds,
-                          hourly_rate_snapshot: newRate
-                        });
-                        setShowBillableEditor(false);
-                        if (Platform.OS !== 'web') {
-                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                        }
-                      }
-                    }}
-                  >
-                    <Text style={styles.timeEditorSaveText}>Save</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
+        {/* Error Message */}
+        {meeting.error_message && (
+          <View style={styles.errorCard}>
+            <AlertTriangle size={20} color={Colors.error} />
+            <Text style={styles.errorText}>{meeting.error_message}</Text>
           </View>
         )}
 
@@ -1160,35 +477,7 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
       {/* Audio Player */}
       {shouldShowAudioBar && (
         <View style={styles.audioBar}>
-          {meeting.audio_format === "transcoding" ? (
-            <View style={styles.audioErrorContainer}>
-              <Loader size={16} color={Colors.accentLight} />
-              <Text style={styles.audioErrorText}>
-                Audio is being prepared for playback...
-              </Text>
-            </View>
-          ) : meeting.audio_format === "failed" ? (
-            <View style={styles.audioErrorContainer}>
-              <AlertTriangle size={16} color={Colors.warning} />
-              <Text style={styles.audioErrorText} numberOfLines={1}>
-                Audio conversion failed
-              </Text>
-              <Pressable
-                style={styles.retryButton}
-                onPress={() => retryTranscoding(meeting.id)}
-                disabled={isTranscoding}
-              >
-                {isTranscoding ? (
-                  <ActivityIndicator size="small" color={Colors.accentLight} />
-                ) : (
-                  <>
-                    <RefreshCw size={14} color={Colors.accentLight} />
-                    <Text style={styles.retryButtonText}>Retry</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
-          ) : audioLoadError ? (
+          {audioLoadError ? (
             <View style={styles.audioErrorContainer}>
               <AlertTriangle size={16} color={Colors.warning} />
               <Text style={styles.audioErrorText} numberOfLines={2}>
@@ -1202,11 +491,7 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
             </View>
           ) : (
             <>
-              <Pressable
-                style={styles.playButton}
-                onPress={handlePlayPause}
-                disabled={isAudioLoading}
-              >
+              <Pressable style={styles.playButton} onPress={handlePlayPause} disabled={isAudioLoading}>
                 {isPlaying ? (
                   <Pause size={20} color={Colors.text} fill={Colors.text} />
                 ) : (
@@ -1214,71 +499,35 @@ ${aiOutput?.meeting_overview.one_sentence_summary || "No summary available"}
                 )}
               </Pressable>
 
-              <Pressable
-                style={styles.audioProgressContainer}
-                onPress={handleSeek}
-              >
+              <Pressable style={styles.audioProgressContainer} onPress={handleSeek}>
                 <View
                   style={styles.audioProgress}
-                  onLayout={(e) =>
-                    setProgressBarWidth(e.nativeEvent.layout.width)
-                  }
+                  onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
                 >
-                  <View
-                    style={[styles.audioProgressBar, { width: `${progress}%` }]}
-                  />
-                  <View
-                    style={[styles.audioProgressThumb, { left: `${progress}%` }]}
-                  />
+                  <View style={[styles.audioProgressBar, { width: `${progress}%` }]} />
+                  <View style={[styles.audioProgressThumb, { left: `${progress}%` }]} />
                 </View>
               </Pressable>
 
               <Text style={styles.audioTime}>
-                {formatTime(positionMillis)} /{" "}
-                {formatTime(durationMillis || meeting.duration_seconds * 1000)}
+                {formatTime(positionMillis)} / {formatTime(durationMillis || meeting.duration_seconds * 1000)}
               </Text>
 
-              <Pressable
-                style={styles.transcriptButton}
-                onPress={() => setShowTranscript(true)}
-              >
-                <Text style={styles.transcriptButtonText}>Transcript</Text>
-              </Pressable>
+              {segments && segments.length > 0 && (
+                <Pressable style={styles.transcriptButton} onPress={() => setShowTranscript(true)}>
+                  <Text style={styles.transcriptButtonText}>Transcript</Text>
+                </Pressable>
+              )}
             </>
           )}
         </View>
       )}
 
-      {/* FAB */}
-      <FloatingActionButton
-        onPress={() => {
-          if (Platform.OS !== "web") {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }
-          setShowActionsSheet(true);
-        }}
-        audioBarHeight={audioBarHeight}
-      />
-
-      {/* Modals */}
-      <MeetingActionsSheet
-        visible={showActionsSheet}
-        onClose={() => setShowActionsSheet(false)}
-        onEdit={() => router.push(`/edit-meeting?id=${id}` as any)}
-        onShare={handleShare}
-        onDelete={handleDelete}
-      />
-
-      <InsightsBottomSheet
-        visible={showInsights}
-        onClose={() => setShowInsights(false)}
-        aiOutput={aiOutput}
-      />
-
+      {/* Transcript Modal */}
       <TranscriptBottomSheet
         visible={showTranscript}
         onClose={() => setShowTranscript(false)}
-        segments={meeting.transcript_segments}
+        segments={segments}
         onSeek={handleSeekToTimestamp}
       />
     </SafeAreaView>
@@ -1319,11 +568,64 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: "center",
   },
-  headerSpacer: {
-    width: 32,
+  headerActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  headerActionButton: {
+    padding: 8,
   },
   content: {
     flex: 1,
+  },
+  statusBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  statusBannerText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  retryBannerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+  },
+  retryBannerText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: Colors.accentLight,
+  },
+  detailsCard: {
+    backgroundColor: Colors.surface,
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  detailLabel: {
+    fontSize: 14,
+    color: Colors.textMuted,
+  },
+  detailText: {
+    fontSize: 14,
+    color: Colors.text,
   },
   card: {
     backgroundColor: Colors.surface,
@@ -1334,27 +636,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   cardTitle: {
     fontSize: 16,
     fontWeight: "600",
     color: Colors.text,
     marginBottom: 12,
   },
-  topicsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginBottom: 10,
-    gap: 6,
-  },
-  topicChip: {
-    backgroundColor: Colors.accentLight,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  topicChipText: {
-    fontSize: 12,
-    color: Colors.background,
+  viewAllLink: {
+    fontSize: 14,
+    color: Colors.accentLight,
     fontWeight: "500",
   },
   summaryText: {
@@ -1362,16 +658,10 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 22,
   },
-  viewDetailsLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 12,
-    gap: 4,
-  },
-  viewDetailsLinkText: {
+  transcriptPreview: {
     fontSize: 14,
-    color: Colors.accentLight,
-    fontWeight: "500",
+    color: Colors.textSecondary,
+    lineHeight: 20,
   },
   noDataText: {
     fontSize: 14,
@@ -1379,85 +669,23 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 16,
   },
-  actionItem: {
+  errorCard: {
+    backgroundColor: `${Colors.error}15`,
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.error,
     flexDirection: "row",
     alignItems: "flex-start",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    gap: 12,
   },
-  actionCheckbox: {
-    marginRight: 12,
-    marginTop: 2,
-  },
-  actionContent: {
+  errorText: {
     flex: 1,
-  },
-  actionTitleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-  },
-  actionTitle: {
-    flex: 1,
-    fontSize: 15,
-    color: Colors.text,
+    fontSize: 14,
+    color: Colors.error,
     lineHeight: 20,
-  },
-  actionTitleCompleted: {
-    textDecorationLine: "line-through",
-    color: Colors.textMuted,
-  },
-  actionMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 4,
-  },
-  actionMetaText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-  },
-  actionButtons: {
-    flexDirection: 'row' as const,
-    gap: 8,
-  },
-  actionEditButton: {
-    padding: 4,
-  },
-  actionDeleteButton: {
-    padding: 4,
-  },
-  billingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  billingIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: `${Colors.success}15`,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  billingContent: {
-    flex: 1,
-  },
-  billingLabel: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginBottom: 2,
-  },
-  billingAmount: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: Colors.success,
-    marginBottom: 2,
-  },
-  billingDetail: {
-    fontSize: 11,
-    color: Colors.textSecondary,
   },
   audioBar: {
     flexDirection: "row",
@@ -1531,94 +759,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexWrap: "wrap",
   },
-  retryButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: `${Colors.accentLight}15`,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    gap: 4,
-  },
-  retryButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: Colors.accentLight,
-  },
-  // FAB Styles
-  fabMain: {
-    position: "absolute",
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: Colors.accentLight,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  // Actions Sheet Styles
-  actionsSheetContainer: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: Platform.OS === "ios" ? 34 : 20,
-  },
-  actionsSheetHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  actionsSheetContent: {
-    paddingVertical: 8,
-  },
-  actionSheetItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    gap: 16,
-  },
-  actionSheetIconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: `${Colors.accentLight}15`,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionSheetIconDanger: {
-    backgroundColor: `${Colors.error}15`,
-  },
-  actionSheetTextContainer: {
-    flex: 1,
-  },
-  actionSheetItemTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  actionSheetItemTitleDanger: {
-    color: Colors.error,
-  },
-  actionSheetItemDescription: {
-    fontSize: 13,
-    color: Colors.textMuted,
-  },
-  actionSheetDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: 8,
-    marginHorizontal: 20,
-  },
   // Bottom Sheet Styles
   bottomSheetOverlay: {
     flex: 1,
@@ -1664,23 +804,6 @@ const styles = StyleSheet.create({
   bottomSheetContent: {
     padding: 20,
   },
-  insightSection: {
-    marginBottom: 24,
-  },
-  insightSectionTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: Colors.text,
-    marginBottom: 12,
-  },
-  insightItem: {
-    marginBottom: 8,
-  },
-  insightItemText: {
-    fontSize: 14,
-    color: Colors.text,
-    lineHeight: 20,
-  },
   transcriptSearchContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -1724,544 +847,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.text,
     lineHeight: 21,
-  },
-  highlightedText: {
-    backgroundColor: `${Colors.accentLight}40`,
-    color: Colors.text,
-    fontWeight: "600",
-  },
-  emptyInsightsContainer: {
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-    alignItems: "center" as const,
-  },
-  emptyInsightsText: {
-    fontSize: 15,
-    color: Colors.text,
-    textAlign: "center" as const,
-    marginBottom: 8,
-    fontWeight: "500" as const,
-  },
-  emptyInsightsSubtext: {
-    fontSize: 13,
-    color: Colors.textMuted,
-    textAlign: "center" as const,
-    lineHeight: 18,
-  },
-  // Quick Add Modal Styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  quickAddModalContent: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
-    width: "85%",
-    maxWidth: 400,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  quickAddModalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  quickAddModalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: Colors.text,
-  },
-  quickAddInput: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
-    color: Colors.text,
-    minHeight: 60,
-    textAlignVertical: "top",
-    marginBottom: 12,
-  },
-  quickAddHelperText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginBottom: 20,
-    lineHeight: 16,
-  },
-  quickAddActions: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  quickAddButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  quickAddCancelButton: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  quickAddCancelText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  quickAddAddButton: {
-    backgroundColor: Colors.accentLight,
-  },
-  quickAddAddButtonDisabled: {
-    opacity: 0.5,
-  },
-  quickAddAddText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: Colors.background,
-  },
-  // Add Task Sheet Styles
-  addTaskSheetContainer: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "90%",
-    paddingBottom: Platform.OS === "ios" ? 34 : 20,
-  },
-  editTaskSheetContainer: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "75%",
-    paddingBottom: Platform.OS === "ios" ? 34 : 20,
-  },
-  addTaskContent: {
-    paddingHorizontal: 20,
-    flexGrow: 1,
-  },
-  taskInputContainer: {
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  taskTitleInput: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: Colors.text,
-    minHeight: 80,
-    textAlignVertical: "top" as const,
-  },
-  optionRow: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  optionRowDisabled: {
-    opacity: 0.5,
-  },
-  optionIconWrapper: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.surfaceLight,
-    justifyContent: "center" as const,
-    alignItems: "center" as const,
-    marginRight: 12,
-  },
-  optionTextContainer: {
-    flex: 1,
-  },
-  optionLabel: {
-    fontSize: 14,
-    fontWeight: "600" as const,
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  optionLabelDisabled: {
-    color: Colors.textMuted,
-  },
-  optionValue: {
-    fontSize: 13,
-    color: Colors.textMuted,
-  },
-  optionValueActive: {
-    color: Colors.accentLight,
-    fontWeight: "500" as const,
-  },
-  optionValueDisabled: {
-    color: Colors.textMuted,
-  },
-  optionChipsContainer: {
-    flexDirection: "row" as const,
-    flexWrap: "wrap" as const,
-    gap: 8,
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  optionChip: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 6,
-  },
-  optionChipActive: {
-    backgroundColor: Colors.accentLight,
-    borderColor: Colors.accentLight,
-  },
-  optionChipText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    fontWeight: "500" as const,
-  },
-  optionChipTextActive: {
-    color: Colors.background,
-    fontWeight: "600" as const,
-  },
-  addTaskFooter: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  addTaskButton: {
-    backgroundColor: Colors.accentLight,
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: "center" as const,
-  },
-  addTaskButtonDisabled: {
-    opacity: 0.5,
-  },
-  addTaskButtonText: {
-    fontSize: 16,
-    fontWeight: "600" as const,
-    color: Colors.background,
-  },
-  selectedDateTimeContainer: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    backgroundColor: `${Colors.accentLight}15`,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginBottom: 12,
-    gap: 8,
-  },
-  selectedDateTimeText: {
-    fontSize: 13,
-    color: Colors.accentLight,
-    fontWeight: "600" as const,
-  },
-  datePickerOverlay: {
-    flex: 1,
-    justifyContent: "flex-end" as const,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-  },
-  datePickerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  datePickerContainer: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: Platform.OS === "ios" ? 34 : 20,
-  },
-  datePickerHeader: {
-    flexDirection: "row" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  datePickerTitle: {
-    fontSize: 18,
-    fontWeight: "600" as const,
-    color: Colors.text,
-  },
-  datePickerDoneButton: {
-    fontSize: 16,
-    fontWeight: "600" as const,
-    color: Colors.accentLight,
-  },
-  detailsSection: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 16,
-  },
-  detailRow: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  lastDetailRow: {
-    borderBottomWidth: 0,
-  },
-  detailIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: `${Colors.accentLight}15`,
-    justifyContent: "center" as const,
-    alignItems: "center" as const,
-    marginRight: 16,
-  },
-  detailContent: {
-    flex: 1,
-  },
-  detailLabel: {
-    fontSize: 13,
-    color: Colors.textMuted,
-    marginBottom: 4,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-    fontWeight: "500" as const,
-  },
-  detailValue: {
-    fontSize: 17,
-    fontWeight: "600" as const,
-    color: Colors.text,
-  },
-  billableToggleContainer: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 8,
-  },
-  billableToggleLabel: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    fontWeight: "500" as const,
-  },
-  billableToggleLabelActive: {
-    color: Colors.text,
-    fontWeight: "600" as const,
-  },
-  dropdownContainer: {
-    backgroundColor: Colors.surfaceLight,
-    borderRadius: 8,
-    marginTop: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    maxHeight: 200,
-  },
-  dropdownScroll: {
-    maxHeight: 200,
-  },
-  dropdownItem: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  dropdownItemInfo: {
-    flex: 1,
-  },
-  dropdownItemText: {
-    fontSize: 14,
-    color: Colors.text,
-    fontWeight: "500" as const,
-  },
-  dropdownItemContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  meetingTypeDisplay: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  meetingTypeColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  dropdownItemSubtext: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  timeEditorContainer: {
-    backgroundColor: Colors.surfaceLight,
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  timeEditorLabel: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 12,
-  },
-  timeEditorInputRow: {
-    flexDirection: 'row' as const,
-    gap: 16,
-    marginBottom: 16,
-  },
-  timeEditorInputGroup: {
-    flex: 1,
-  },
-  timeEditorInput: {
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 18,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    textAlign: 'center' as const,
-    marginBottom: 6,
-  },
-  timeEditorUnit: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    textAlign: 'center' as const,
-  },
-  timeEditorActions: {
-    flexDirection: 'row' as const,
-    gap: 12,
-  },
-  timeEditorCancelButton: {
-    flex: 1,
-    paddingVertical: 12,
-    backgroundColor: Colors.background,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center' as const,
-  },
-  timeEditorCancelText: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  timeEditorSaveButton: {
-    flex: 1,
-    paddingVertical: 12,
-    backgroundColor: Colors.accentLight,
-    borderRadius: 8,
-    alignItems: 'center' as const,
-  },
-  timeEditorSaveText: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.background,
-  },
-  actionEditButtonNew: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    backgroundColor: Colors.surfaceLight,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  actionEditButtonText: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    color: Colors.accentLight,
-  },
-  deleteTaskButton: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    gap: 8,
-    paddingVertical: 14,
-    backgroundColor: `${Colors.error}15`,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    marginTop: 12,
-  },
-  deleteTaskButtonText: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.error,
-  },
-  billableEditorContainer: {
-    backgroundColor: Colors.surfaceLight,
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  billableEditorLabel: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 16,
-  },
-  billableEditorSectionLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    color: Colors.textMuted,
-    marginBottom: 8,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-  },
-  hourlyRateInputContainer: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 16,
-  },
-  hourlyRateDollarSign: {
-    fontSize: 18,
-    fontWeight: '600' as const,
-    color: Colors.success,
-    marginRight: 4,
-  },
-  hourlyRateInput: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    padding: 0,
-  },
-  hourlyRateUnit: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    marginLeft: 4,
   },
 });
