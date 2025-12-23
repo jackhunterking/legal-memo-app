@@ -12,14 +12,10 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import {
-  useAudioRecorder,
-  useAudioRecorderState,
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-} from "expo-audio";
-import * as FileSystem from "expo-file-system/legacy";
+import { Audio } from "expo-av";
+// Use expo-file-system for reliable file reading
+import { File as ExpoFile } from "expo-file-system";
+import * as LegacyFileSystem from "expo-file-system/legacy";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -31,74 +27,73 @@ export default function RecordingScreen() {
   const { uploadAudio, updateMeeting } = useMeetings();
   const { user } = useAuth();
 
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [recordedAt, setRecordedAt] = useState<string | null>(null);
-  const [hasStartedRecording, setHasStartedRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
 
+  const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  // Use the new expo-audio hooks
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, (status) => {
-    // Recording status callback
-    if (status.isFinished) {
-      console.log("[Recording] Recording finished");
-    }
-  });
-  
-  const recorderState = useAudioRecorderState(audioRecorder);
+  const hasStartedRef = useRef(false);
 
   const startRecording = useCallback(async () => {
-    if (hasStartedRecording) return;
-    setHasStartedRecording(true);
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
 
     try {
-      // Request recording permissions using new API
-      console.log("[Recording] Requesting recording permissions...");
-      const status = await AudioModule.requestRecordingPermissionsAsync();
+      console.log("[Recording] Requesting permissions...");
+      const { status } = await Audio.requestPermissionsAsync();
       console.log("[Recording] Permission status:", status);
-      
-      if (!status.granted) {
-        throw new Error("Microphone permission was denied. Please grant microphone access in your device settings.");
+
+      if (status !== "granted") {
+        throw new Error(
+          "Microphone permission denied. Please grant microphone access in your device settings."
+        );
       }
 
-      // Configure audio mode for recording using new API
       console.log("[Recording] Setting audio mode...");
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
       });
-      
-      // Prepare and start recording
-      console.log("[Recording] Preparing recorder...");
-      await audioRecorder.prepareToRecordAsync();
-      
-      console.log("[Recording] Starting recording...");
-      audioRecorder.record();
-      
+
+      console.log("[Recording] Creating recording...");
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        (status) => {
+          // Log metering data to verify microphone is capturing audio
+          if (status.isRecording && status.metering !== undefined) {
+            console.log("[Recording] Metering:", status.metering, "dB");
+          }
+        },
+        100 // Update every 100ms
+      );
+
+      recordingRef.current = recording;
+      setIsRecording(true);
       setRecordedAt(new Date().toISOString());
-      console.log("[Recording] Recording started successfully!");
+      console.log("[Recording] Started successfully!");
     } catch (err) {
       console.error("[Recording] Start error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
       if (Platform.OS !== "web") {
         Alert.alert(
-          "Recording Error", 
-          `Failed to start recording: ${errorMessage}`
+          "Recording Error",
+          err instanceof Error ? err.message : "Failed to start recording"
         );
       }
       router.back();
     }
-  }, [hasStartedRecording, audioRecorder, router]);
+  }, [router]);
 
   useEffect(() => {
     startRecording();
   }, [startRecording]);
 
-  // Pulse animation for recording indicator
+  // Pulse animation
   useEffect(() => {
-    if (recorderState.isRecording && !isUploading) {
+    if (isRecording && !isPaused && !isUploading) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -116,16 +111,14 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [recorderState.isRecording, isUploading, pulseAnim]);
+  }, [isRecording, isPaused, isUploading, pulseAnim]);
 
-  // Timer - update based on recorder state
+  // Timer
   useEffect(() => {
-    if (recorderState.isRecording) {
+    if (isRecording && !isPaused) {
       timerRef.current = setInterval(() => {
-        // Use the recorder's duration if available, otherwise use elapsed seconds
-        const durationSec = Math.floor(recorderState.durationMillis / 1000);
-        setElapsedSeconds(durationSec);
-      }, 500);
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
     } else {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -138,20 +131,23 @@ export default function RecordingScreen() {
         clearInterval(timerRef.current);
       }
     };
-  }, [recorderState.isRecording, recorderState.durationMillis]);
+  }, [isRecording, isPaused]);
 
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    const recording = recordingRef.current;
+    if (!recording) return;
+
     try {
-      if (!recorderState.isRecording) {
-        // Resume recording
-        audioRecorder.record();
+      if (isPaused) {
+        await recording.startAsync();
+        setIsPaused(false);
       } else {
-        // Pause recording
-        audioRecorder.pause();
+        await recording.pauseAsync();
+        setIsPaused(true);
       }
     } catch (err) {
       console.error("[Recording] Pause/Resume error:", err);
@@ -182,123 +178,190 @@ export default function RecordingScreen() {
   };
 
   const performStop = async () => {
-    if (!meetingId || !user?.id) return;
+    const recording = recordingRef.current;
+    if (!recording || !meetingId || !user?.id) return;
 
     setIsUploading(true);
 
     try {
-      // Get duration before stopping
-      const durationMs = recorderState.durationMillis;
-      console.log("[Recording] Duration before stop:", durationMs, "ms");
-      
-      // Validate minimum recording duration
-      if (durationMs < 1000) {
-        throw new Error("Recording too short. Please record for at least 1 second.");
-      }
-      
-      console.log("[Recording] Stopping recording...");
-      await audioRecorder.stop();
-      
-      // Reset audio mode
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
+      // Get status before stopping to get duration
+      const statusBeforeStop = await recording.getStatusAsync();
+      const durationMillis = statusBeforeStop.durationMillis || elapsedSeconds * 1000;
+      console.log("[Recording] Duration before stop:", durationMillis, "ms");
+
+      console.log("[Recording] Stopping and unloading...");
+      await recording.stopAndUnloadAsync();
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
       });
-      
-      // Get the URI from the recorder
-      const uri = audioRecorder.uri;
+
+      const uri = recording.getURI();
       console.log("[Recording] Stopped, URI:", uri);
 
       if (!uri) {
         throw new Error("No recording URI available. The recording may have failed.");
       }
 
-      // Get the audio data using expo-file-system (fixes iOS fetch issue with file:// URIs)
-      console.log("[Recording] Reading audio file from URI...");
-      
-      let blob: Blob;
+      // Platform-specific file reading
+      let fileData: Blob;
       let contentType: string;
       let fileExtension: string;
       let audioFormat: string;
-      
+
       if (Platform.OS === "web") {
-        // On web, use fetch as it works correctly
+        console.log("[Recording] Web platform - using fetch...");
         const response = await fetch(uri);
         if (!response.ok) {
           throw new Error(`Failed to fetch audio: ${response.statusText}`);
         }
-        blob = await response.blob();
-        contentType = blob.type || "audio/webm";
+        fileData = await response.blob();
+        contentType = fileData.type || "audio/webm";
         const isWebm = contentType.includes("webm") || contentType.includes("ogg");
         fileExtension = isWebm ? "webm" : "m4a";
         audioFormat = isWebm ? "webm" : "m4a";
         console.log("[Recording] Web audio format:", contentType, "->", audioFormat);
       } else {
-        // On native (iOS/Android), use expo-file-system to read the file
-        // This fixes the issue where fetch(file://) returns an empty blob on iOS
+        // NATIVE PLATFORM (iOS/Android)
+        console.log("[Recording] Native platform - reading file...");
+        console.log("[Recording] File URI:", uri);
         
-        // First, verify the file exists and get its info
-        const fileInfo = await FileSystem.getInfoAsync(uri);
-        console.log("[Recording] File info:", JSON.stringify(fileInfo));
+        let bytesData: Uint8Array | null = null;
+        let fileSize = 0;
         
-        if (!fileInfo.exists) {
-          throw new Error("Recording file does not exist. The recording may have failed.");
+        // ========== Method 1: Try the new ExpoFile API ==========
+        try {
+          console.log("[Recording] Method 1: Trying ExpoFile API...");
+          const audioFile = new ExpoFile(uri);
+          
+          console.log("[Recording] - ExpoFile created successfully");
+          console.log("[Recording] - exists:", audioFile.exists);
+          console.log("[Recording] - size:", audioFile.size, "bytes");
+          console.log("[Recording] - type:", audioFile.type);
+          
+          if (audioFile.exists && audioFile.size > 0) {
+            fileSize = audioFile.size;
+            console.log("[Recording] - Reading bytes...");
+            bytesData = await audioFile.bytes();
+            console.log("[Recording] - bytes() returned:", bytesData?.length || 0, "bytes");
+            
+            if (bytesData && bytesData.length > 0) {
+              console.log("[Recording] Method 1 SUCCESS: Read", bytesData.length, "bytes");
+            } else {
+              console.log("[Recording] Method 1 FAILED: bytes() returned empty");
+              bytesData = null;
+            }
+          } else {
+            console.log("[Recording] Method 1 FAILED: File doesn't exist or is empty");
+          }
+        } catch (method1Error) {
+          console.warn("[Recording] Method 1 ERROR:", method1Error);
         }
         
-        if (fileInfo.size === 0) {
-          throw new Error("Recording file is empty (0 bytes). This may indicate a recording failure.");
+        // ========== Method 2: Try legacy FileSystem API ==========
+        if (!bytesData || bytesData.length === 0) {
+          try {
+            console.log("[Recording] Method 2: Trying legacy FileSystem API...");
+            
+            // Get file info
+            const fileInfo = await LegacyFileSystem.getInfoAsync(uri);
+            console.log("[Recording] - File info:", JSON.stringify(fileInfo));
+            
+            if (!fileInfo.exists) {
+              throw new Error("Recording file does not exist");
+            }
+            
+            fileSize = fileInfo.size || 0;
+            console.log("[Recording] - File size from info:", fileSize, "bytes");
+            
+            if (fileSize === 0) {
+              // Check if it's a directory
+              console.warn("[Recording] - File shows 0 bytes, checking if it's really a file...");
+            }
+            
+            // Read as base64
+            console.log("[Recording] - Reading file as base64...");
+            const base64Data = await LegacyFileSystem.readAsStringAsync(uri, {
+              encoding: LegacyFileSystem.EncodingType.Base64,
+            });
+            console.log("[Recording] - Base64 length:", base64Data.length, "characters");
+            
+            if (!base64Data || base64Data.length === 0) {
+              throw new Error("readAsStringAsync returned empty");
+            }
+            
+            // Convert base64 to bytes (React Native compatible - no atob)
+            console.log("[Recording] - Decoding base64...");
+            bytesData = base64ToUint8Array(base64Data);
+            console.log("[Recording] - Decoded:", bytesData.length, "bytes");
+            
+            if (bytesData && bytesData.length > 0) {
+              console.log("[Recording] Method 2 SUCCESS: Decoded", bytesData.length, "bytes");
+            } else {
+              console.log("[Recording] Method 2 FAILED: base64 decode returned empty");
+              bytesData = null;
+            }
+          } catch (method2Error) {
+            console.error("[Recording] Method 2 ERROR:", method2Error);
+          }
         }
         
-        // Read the file as base64
-        console.log("[Recording] Reading file as base64...");
-        const base64Data = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        
-        console.log("[Recording] Base64 data length:", base64Data.length, "characters");
-        
-        if (!base64Data || base64Data.length === 0) {
-          throw new Error("Failed to read audio file data.");
+        // ========== Validate we got data ==========
+        if (!bytesData || bytesData.length === 0) {
+          // Log diagnostic info
+          console.error("[Recording] CRITICAL: All file reading methods failed!");
+          console.error("[Recording] URI was:", uri);
+          console.error("[Recording] File size was reported as:", fileSize);
+          
+          throw new Error(
+            `Failed to read audio file. The recording file may be empty or corrupted. ` +
+            `File size reported: ${fileSize} bytes. ` +
+            `Please check microphone permissions and try again.`
+          );
         }
         
-        // Convert base64 to blob
-        // Decode base64 to binary
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+        if (bytesData.length < 1000) {
+          throw new Error(
+            `Recording file is too small (${bytesData.length} bytes). ` +
+            `Please try recording again for a longer duration.`
+          );
         }
         
-        // Native (iOS/Android) uses M4A format
+        // Create blob from bytes
         contentType = "audio/mp4";
         fileExtension = "m4a";
         audioFormat = "m4a";
         
-        blob = new Blob([bytes], { type: contentType });
-        console.log("[Recording] Created blob from file, size:", blob.size, "bytes (file size:", fileInfo.size, ")");
+        fileData = new Blob([bytesData], { type: contentType });
+        console.log("[Recording] Created blob:", fileData.size, "bytes, type:", fileData.type);
+        
+        // Verify blob size matches bytes
+        if (fileData.size !== bytesData.length) {
+          console.warn("[Recording] WARNING: Blob size mismatch!", {
+            blobSize: fileData.size,
+            bytesLength: bytesData.length,
+          });
+        }
       }
+
+      // Final validation
+      console.log("[Recording] Final blob size:", fileData.size, "bytes");
       
-      console.log("[Recording] Blob size:", blob.size, "bytes, type:", blob.type);
-      
-      // Validate that we have actual audio data
-      if (blob.size === 0) {
-        throw new Error("Recording is empty (0 bytes). This may be due to microphone permission issues. Please check your device settings and try again.");
+      if (fileData.size === 0) {
+        throw new Error(
+          "Recording is empty (0 bytes). This may be due to microphone permission issues. " +
+          "Please check your device settings and try again."
+        );
       }
-      
-      if (blob.size < 1000) {
-        // Audio file too small to be valid (less than 1KB)
-        throw new Error(`Recording file is too small (${blob.size} bytes). Please try recording again for a longer duration.`);
-      }
-      
-      // Upload path: user_id/meeting_id/audio.ext
+
+      // Upload to Supabase
       const audioPath = `${user.id}/${meetingId}/audio.${fileExtension}`;
+      console.log("[Recording] Uploading", fileData.size, "bytes to:", audioPath);
 
-      console.log("[Recording] Uploading", blob.size, "bytes to:", audioPath);
-
-      // Upload to Supabase Storage
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError, data: uploadData } = await supabase.storage
         .from("meeting-audio")
-        .upload(audioPath, blob, {
+        .upload(audioPath, fileData, {
           contentType,
           upsert: true,
         });
@@ -308,40 +371,72 @@ export default function RecordingScreen() {
         throw uploadError;
       }
 
-      console.log("[Recording] Upload complete, triggering processing...");
+      console.log("[Recording] Upload successful:", uploadData);
 
-      // Update meeting and trigger processing
+      // Trigger processing
       await uploadAudio({
         meetingId,
         audioPath,
         audioFormat,
-        durationSeconds: Math.round(durationMs / 1000),
+        durationSeconds: Math.round(durationMillis / 1000),
         recordedAt: recordedAt || new Date().toISOString(),
       });
 
-      // Navigate to processing screen
       router.replace({ pathname: "/processing", params: { meetingId } });
     } catch (err) {
       console.error("[Recording] Stop/upload error:", err);
       setIsUploading(false);
-      
-      // Update meeting status to failed
+
       try {
         await updateMeeting({
           meetingId,
-          updates: { 
-            status: "failed", 
-            error_message: err instanceof Error ? err.message : "Upload failed" 
+          updates: {
+            status: "failed",
+            error_message: err instanceof Error ? err.message : "Upload failed",
           },
         });
       } catch (updateErr) {
         console.error("[Recording] Failed to update meeting status:", updateErr);
       }
-      
+
       if (Platform.OS !== "web") {
-        Alert.alert("Recording Error", err instanceof Error ? err.message : "Failed to save recording. Please try again.");
+        Alert.alert(
+          "Recording Error",
+          err instanceof Error ? err.message : "Failed to save recording. Please try again."
+        );
       }
+    } finally {
+      recordingRef.current = null;
     }
+  };
+
+  // Base64 to Uint8Array decoder (React Native compatible - doesn't use atob)
+  const base64ToUint8Array = (base64: string): Uint8Array => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const lookup = new Uint8Array(256);
+    for (let i = 0; i < chars.length; i++) {
+      lookup[chars.charCodeAt(i)] = i;
+    }
+    
+    // Remove whitespace and padding
+    const cleanBase64 = base64.replace(/[^A-Za-z0-9+/]/g, "");
+    const paddingLen = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+    const outputLen = Math.floor((cleanBase64.length * 3) / 4) - paddingLen;
+    const output = new Uint8Array(outputLen);
+    
+    let p = 0;
+    for (let i = 0; i < cleanBase64.length; i += 4) {
+      const a = lookup[cleanBase64.charCodeAt(i)];
+      const b = lookup[cleanBase64.charCodeAt(i + 1)];
+      const c = lookup[cleanBase64.charCodeAt(i + 2)];
+      const d = lookup[cleanBase64.charCodeAt(i + 3)];
+      
+      output[p++] = (a << 2) | (b >> 4);
+      if (p < outputLen) output[p++] = ((b & 15) << 4) | (c >> 2);
+      if (p < outputLen) output[p++] = ((c & 3) << 6) | d;
+    }
+    
+    return output;
   };
 
   const formatTime = (seconds: number) => {
@@ -354,8 +449,6 @@ export default function RecordingScreen() {
     }
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
-
-  const isPaused = recorderState.canRecord && !recorderState.isRecording && hasStartedRecording;
 
   return (
     <SafeAreaView style={styles.container}>
