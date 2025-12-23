@@ -1,3 +1,20 @@
+/**
+ * Recording Screen
+ * 
+ * Main recording interface with real-time streaming transcription.
+ * Integrates chunked audio recording with live transcript display.
+ * 
+ * Uses:
+ * - useChunkedRecording: Manages audio recording in chunks
+ * - useStreamingTranscription: Manages transcript state
+ * - LiveTranscript: Displays real-time transcription
+ * 
+ * Per Expo Audio docs:
+ * - Requests permissions via AudioModule.requestRecordingPermissionsAsync()
+ * - Configures audio mode via setAudioModeAsync()
+ * - Uses useAudioRecorder for recording
+ */
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
@@ -7,25 +24,21 @@ import {
   Platform,
   Alert,
   Animated,
+  BackHandler,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Pause, Play, Square, Mic } from "lucide-react-native";
+import { Pause, Play, Square, Mic, Wifi, WifiOff } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import {
-  useAudioRecorder,
-  useAudioRecorderState,
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-} from "expo-audio";
 import * as FileSystem from "expo-file-system";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
-import { useStreamingTranscription, TranscriptTurn } from "@/hooks/useStreamingTranscription";
+import { useChunkedRecording, type ChunkResult } from "@/hooks/useChunkedRecording";
+import { useStreamingTranscription } from "@/hooks/useStreamingTranscription";
 import LiveTranscript from "@/components/LiveTranscript";
+import { AUDIO_FILE_CONFIG } from "@/lib/audio-config";
 
 export default function RecordingScreen() {
   const router = useRouter();
@@ -33,108 +46,97 @@ export default function RecordingScreen() {
   const { uploadAudio, updateMeeting } = useMeetings();
   const { user } = useAuth();
 
+  // Local state
   const [isUploading, setIsUploading] = useState(false);
   const [recordedAt, setRecordedAt] = useState<string | null>(null);
-  const [hasPermission, setHasPermission] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [totalDurationMs, setTotalDurationMs] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
+  // Animation refs
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const hasStartedRef = useRef(false);
+  const hasInitialized = useRef(false);
 
-  // expo-audio recorder hook
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(audioRecorder);
-
-  // Streaming transcription hook
+  // Streaming transcription state
   const {
-    isConnected: isStreamingConnected,
-    turns: transcriptTurns,
+    isConnected,
+    turns,
     currentPartial,
-    connect: connectStreaming,
-    disconnect: disconnectStreaming,
+    processChunkResult,
+    setConnected,
+    setError: setTranscriptError,
+    clearTranscript,
   } = useStreamingTranscription();
 
-  // Request permissions and initialize
-  const initializeRecording = useCallback(async () => {
-    if (hasStartedRef.current) return;
-    hasStartedRef.current = true;
+  // Handle chunk processed callback
+  const handleChunkProcessed = useCallback((result: ChunkResult) => {
+    processChunkResult(result);
+  }, [processChunkResult]);
 
-    try {
-      console.log("[Recording] Requesting permissions...");
-      const status = await AudioModule.requestRecordingPermissionsAsync();
-      console.log("[Recording] Permission status:", status.granted);
+  // Chunked recording hook
+  const {
+    isRecording,
+    durationMillis,
+    hasPermission,
+    isInitialized,
+    sessionId,
+    chunkIndex,
+    isProcessingChunk,
+    error: recordingError,
+    totalChunksProcessed,
+    startSession,
+    stopSession,
+    pauseRecording,
+    resumeRecording,
+  } = useChunkedRecording(handleChunkProcessed);
 
-      if (!status.granted) {
-        throw new Error(
-          "Microphone permission denied. Please grant microphone access in your device settings."
-        );
-      }
-
-      setHasPermission(true);
-
-      console.log("[Recording] Setting audio mode...");
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-      });
-
-      setIsInitialized(true);
-    } catch (err) {
-      console.error("[Recording] Init error:", err);
-      if (Platform.OS !== "web") {
-        Alert.alert(
-          "Recording Error",
-          err instanceof Error ? err.message : "Failed to initialize recording"
-        );
-      }
-      router.back();
-    }
-  }, [router]);
-
-  // Start recording after initialization
-  const startRecording = useCallback(async () => {
-    if (!isInitialized || recorderState.isRecording) return;
-
-    try {
-      console.log("[Recording] Preparing to record...");
-      await audioRecorder.prepareToRecordAsync();
-      
-      console.log("[Recording] Starting recording...");
-      audioRecorder.record();
-      setRecordedAt(new Date().toISOString());
-
-      // Connect to streaming transcription
-      console.log("[Recording] Connecting to streaming transcription...");
-      await connectStreaming();
-
-      console.log("[Recording] Started successfully!");
-    } catch (err) {
-      console.error("[Recording] Start error:", err);
-      if (Platform.OS !== "web") {
-        Alert.alert(
-          "Recording Error",
-          err instanceof Error ? err.message : "Failed to start recording"
-        );
-      }
-    }
-  }, [isInitialized, recorderState.isRecording, audioRecorder, connectStreaming]);
-
-  // Initialize on mount
+  // Update connection state when session changes
   useEffect(() => {
+    setConnected(!!sessionId, sessionId);
+  }, [sessionId, setConnected]);
+
+  // Track total duration across pause/resume
+  useEffect(() => {
+    if (isRecording && !isPaused) {
+      const interval = setInterval(() => {
+        setTotalDurationMs((prev) => prev + 100);
+      }, 100);
+      return () => clearInterval(interval);
+    }
+  }, [isRecording, isPaused]);
+
+  // Initialize recording on mount
+  useEffect(() => {
+    if (hasInitialized.current || !meetingId) return;
+    hasInitialized.current = true;
+
+    const initializeRecording = async () => {
+      try {
+        console.log("[Recording] Initializing...");
+        setRecordedAt(new Date().toISOString());
+        
+        // Start recording session
+        await startSession(meetingId);
+        
+        console.log("[Recording] Recording started successfully");
+      } catch (err) {
+        console.error("[Recording] Init error:", err);
+        
+        if (Platform.OS !== "web") {
+          Alert.alert(
+            "Recording Error",
+            err instanceof Error ? err.message : "Failed to initialize recording"
+          );
+        }
+        router.back();
+      }
+    };
+
     initializeRecording();
-  }, [initializeRecording]);
-
-  // Start recording when initialized
-  useEffect(() => {
-    if (isInitialized && hasPermission && !recorderState.isRecording) {
-      startRecording();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isInitialized, hasPermission, startRecording]);
+  }, [meetingId, startSession, router]);
 
   // Pulse animation
   useEffect(() => {
-    if (recorderState.isRecording && !isUploading) {
+    if (isRecording && !isPaused && !isUploading) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -152,24 +154,41 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [recorderState.isRecording, isUploading, pulseAnim]);
+  }, [isRecording, isPaused, isUploading, pulseAnim]);
 
+  // Handle back button - show confirmation
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (isRecording || sessionId) {
+        handleStop();
+        return true;
+      }
+      return false;
+    });
+
+    return () => backHandler.remove();
+  }, [isRecording, sessionId]);
+
+  // Handle pause/resume
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
     try {
-      if (recorderState.isRecording) {
-        await audioRecorder.pause();
+      if (isPaused) {
+        resumeRecording();
+        setIsPaused(false);
       } else {
-        audioRecorder.record();
+        pauseRecording();
+        setIsPaused(true);
       }
     } catch (err) {
       console.error("[Recording] Pause/Resume error:", err);
     }
   };
 
+  // Handle stop recording
   const handleStop = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -184,123 +203,58 @@ export default function RecordingScreen() {
     } else {
       Alert.alert(
         "Stop Recording",
-        "Are you sure you want to stop the recording?",
+        "Are you sure you want to stop the recording? Your transcription will be saved.",
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Stop", style: "destructive", onPress: confirmStop },
+          { text: "Stop & Save", style: "destructive", onPress: confirmStop },
         ]
       );
     }
   };
 
+  // Perform stop and upload
   const performStop = async () => {
     if (!meetingId || !user?.id) return;
 
     setIsUploading(true);
 
     try {
-      // Get duration before stopping
-      const durationMillis = recorderState.durationMillis || 0;
-      console.log("[Recording] Duration before stop:", durationMillis, "ms");
+      // Stop recording session
+      console.log("[Recording] Stopping session...");
+      await stopSession();
 
-      // Disconnect streaming transcription
-      console.log("[Recording] Disconnecting streaming...");
-      disconnectStreaming();
+      // Calculate duration
+      const durationSeconds = Math.round(totalDurationMs / 1000);
+      console.log("[Recording] Duration:", durationSeconds, "seconds");
 
-      // Stop the recorder
-      console.log("[Recording] Stopping recorder...");
-      await audioRecorder.stop();
-
-      // Reset audio mode
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      });
-
-      const uri = audioRecorder.uri;
-      console.log("[Recording] Stopped, URI:", uri);
-
-      if (!uri) {
-        throw new Error("No recording URI available. The recording may have failed.");
-      }
-
-      // Read file info
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      console.log("[Recording] File info:", JSON.stringify(fileInfo));
-
-      if (!fileInfo.exists) {
-        throw new Error("Recording file does not exist");
-      }
-
-      // Read file as base64
-      console.log("[Recording] Reading file as base64...");
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: "base64",
-      });
-      console.log("[Recording] Base64 length:", base64Data.length, "characters");
-
-      if (!base64Data || base64Data.length === 0) {
-        throw new Error("Failed to read recording file - empty content");
-      }
-
-      // Determine file format and extension
-      const fileExtension = Platform.OS === "ios" ? "m4a" : "m4a";
-      const contentType = "audio/mp4";
-      const audioFormat = "m4a";
-
-      // Upload to Supabase using base64
-      const audioPath = `${user.id}/${meetingId}/audio.${fileExtension}`;
-      console.log("[Recording] Uploading to:", audioPath);
-
-      // Decode base64 to ArrayBuffer for upload
-      const binaryString = atob(base64Data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      console.log("[Recording] Uploading", bytes.length, "bytes...");
-
-      const { error: uploadError, data: uploadData } = await supabase.storage
-        .from("meeting-audio")
-        .upload(audioPath, bytes, {
-          contentType,
-          upsert: true,
-        });
-
-      if (uploadError) {
-        console.error("[Recording] Upload error:", uploadError);
-        throw uploadError;
-      }
-
-      console.log("[Recording] Upload successful:", uploadData);
-
-      // Save streaming transcript turns if available
-      if (transcriptTurns.length > 0) {
-        console.log("[Recording] Saving", transcriptTurns.length, "transcript turns...");
-        await saveStreamingTranscript(meetingId, transcriptTurns);
-      }
-
-      // Trigger processing
-      await uploadAudio({
+      // Update meeting with recording info
+      await updateMeeting({
         meetingId,
-        audioPath,
-        audioFormat,
-        durationSeconds: Math.round(durationMillis / 1000),
-        recordedAt: recordedAt || new Date().toISOString(),
+        updates: {
+          duration_seconds: durationSeconds,
+          recorded_at: recordedAt || new Date().toISOString(),
+          used_streaming_transcription: true,
+          status: "ready", // Mark as ready since we have streaming transcripts
+        },
       });
 
-      router.replace({ pathname: "/processing", params: { meetingId } });
+      // Navigate to meeting detail
+      if (Platform.OS !== "web") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      
+      router.replace(`/meeting/${meetingId}`);
     } catch (err) {
-      console.error("[Recording] Stop/upload error:", err);
+      console.error("[Recording] Stop/save error:", err);
       setIsUploading(false);
 
+      // Update meeting status to failed
       try {
         await updateMeeting({
           meetingId,
           updates: {
             status: "failed",
-            error_message: err instanceof Error ? err.message : "Upload failed",
+            error_message: err instanceof Error ? err.message : "Save failed",
           },
         });
       } catch (updateErr) {
@@ -309,42 +263,14 @@ export default function RecordingScreen() {
 
       if (Platform.OS !== "web") {
         Alert.alert(
-          "Recording Error",
-          err instanceof Error ? err.message : "Failed to save recording. Please try again."
+          "Save Error",
+          err instanceof Error ? err.message : "Failed to save recording"
         );
       }
     }
   };
 
-  // Save streaming transcript to database
-  const saveStreamingTranscript = async (meetingId: string, turns: TranscriptTurn[]) => {
-    try {
-      // Convert turns to segments format
-      const segments = turns.map((turn, index) => ({
-        meeting_id: meetingId,
-        speaker: turn.speaker || `Speaker ${index % 2 === 0 ? 'A' : 'B'}`,
-        text: turn.text,
-        start_ms: turn.startTime,
-        end_ms: turn.endTime,
-        confidence: turn.confidence || 0.9,
-      }));
-
-      if (segments.length > 0) {
-        const { error } = await supabase
-          .from("transcript_segments")
-          .insert(segments);
-
-        if (error) {
-          console.error("[Recording] Error saving streaming transcript:", error);
-        } else {
-          console.log("[Recording] Saved", segments.length, "transcript segments");
-        }
-      }
-    } catch (err) {
-      console.error("[Recording] Error saving streaming transcript:", err);
-    }
-  };
-
+  // Format time display
   const formatTime = (millis: number) => {
     const totalSeconds = Math.floor(millis / 1000);
     const hrs = Math.floor(totalSeconds / 3600);
@@ -357,7 +283,14 @@ export default function RecordingScreen() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const isPaused = !recorderState.isRecording && recorderState.durationMillis > 0;
+  // Get status text
+  const getStatusText = () => {
+    if (isUploading) return "Saving...";
+    if (isPaused) return "Paused";
+    if (isProcessingChunk) return "Processing...";
+    if (isRecording) return "Recording";
+    return "Initializing...";
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -378,26 +311,47 @@ export default function RecordingScreen() {
           </View>
         </View>
 
-        <Text style={styles.statusText}>
-          {isPaused ? "Paused" : isUploading ? "Uploading..." : "Recording"}
-        </Text>
+        {/* Status and Timer */}
+        <Text style={styles.statusText}>{getStatusText()}</Text>
+        <Text style={styles.timer}>{formatTime(totalDurationMs)}</Text>
 
-        <Text style={styles.timer}>{formatTime(recorderState.durationMillis)}</Text>
+        {/* Connection Status */}
+        <View style={styles.connectionStatus}>
+          {isConnected ? (
+            <>
+              <Wifi size={16} color="#10B981" />
+              <Text style={[styles.connectionText, { color: "#10B981" }]}>
+                Live Transcription Active
+              </Text>
+            </>
+          ) : (
+            <>
+              <WifiOff size={16} color={Colors.textMuted} />
+              <Text style={[styles.connectionText, { color: Colors.textMuted }]}>
+                Connecting...
+              </Text>
+            </>
+          )}
+          {totalChunksProcessed > 0 && (
+            <Text style={styles.chunkCount}>
+              {totalChunksProcessed} chunks
+            </Text>
+          )}
+        </View>
 
-        {/* Streaming Connection Status */}
-        {isStreamingConnected && (
-          <View style={styles.streamingStatus}>
-            <View style={styles.streamingDot} />
-            <Text style={styles.streamingText}>Live Transcription Active</Text>
+        {/* Error Display */}
+        {recordingError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{recordingError}</Text>
           </View>
         )}
 
-        {/* Live Transcript Display */}
+        {/* Live Transcript */}
         <View style={styles.transcriptContainer}>
           <LiveTranscript
-            turns={transcriptTurns}
+            turns={turns}
             currentPartial={currentPartial}
-            isConnected={isStreamingConnected}
+            isConnected={isConnected}
           />
         </View>
 
@@ -406,7 +360,7 @@ export default function RecordingScreen() {
           <Pressable
             style={[styles.controlButton, styles.pauseButton]}
             onPress={handlePauseResume}
-            disabled={isUploading}
+            disabled={isUploading || !isInitialized}
           >
             {isPaused ? (
               <Play size={28} color={Colors.text} fill={Colors.text} />
@@ -483,23 +437,33 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     textAlign: "center",
   },
-  streamingStatus: {
+  connectionStatus: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
     gap: 8,
   },
-  streamingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#10B981",
-  },
-  streamingText: {
+  connectionText: {
     fontSize: 13,
-    color: "#10B981",
     fontWeight: "500",
+  },
+  chunkCount: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginLeft: 8,
+  },
+  errorBanner: {
+    backgroundColor: `${Colors.error}20`,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: 13,
+    textAlign: "center",
   },
   transcriptContainer: {
     flex: 1,

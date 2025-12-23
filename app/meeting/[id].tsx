@@ -1,3 +1,16 @@
+/**
+ * Meeting Detail Screen
+ * 
+ * Displays meeting details, audio playback, and transcript.
+ * 
+ * Per Expo Audio documentation:
+ * - Uses useAudioPlayer hook for audio playback
+ * - Uses useAudioPlayerStatus for real-time status updates
+ * - Properly manages audio lifecycle
+ * 
+ * @see .cursor/expo-audio-documentation.md
+ */
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
@@ -12,14 +25,17 @@ import {
   Modal,
   Share,
 } from "react-native";
-import { Audio, AVPlaybackStatus } from "expo-av";
+import {
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  setAudioModeAsync,
+} from "expo-audio";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ChevronLeft,
   Play,
   Pause,
-  Edit3,
   Trash2,
   AlertTriangle,
   Search,
@@ -33,8 +49,12 @@ import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { formatDuration, formatTimestamp, getStatusInfo } from "@/types";
+import { PLAYBACK_AUDIO_MODE } from "@/lib/audio-config";
 
-// Transcript Bottom Sheet Component
+/**
+ * Transcript Bottom Sheet Component
+ * Displays full transcript with search and seek functionality
+ */
 const TranscriptBottomSheet = ({
   visible,
   onClose,
@@ -119,47 +139,45 @@ export default function MeetingDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting, isLoading, refetch } = useMeetingDetails(id || null);
-  const { deleteMeeting, retryProcessing, updateMeeting, isRetrying } = useMeetings();
+  const { deleteMeeting, retryProcessing, isRetrying } = useMeetings();
 
+  // UI state
   const [showTranscript, setShowTranscript] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [positionMillis, setPositionMillis] = useState(0);
-  const [durationMillis, setDurationMillis] = useState(0);
+  const [progressBarWidth, setProgressBarWidth] = useState(0);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
+  // Audio loading state
+  const [audioUri, setAudioUri] = useState<string | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioLoadError, setAudioLoadError] = useState(false);
   const [audioErrorMessage, setAudioErrorMessage] = useState<string | null>(null);
-  const [progressBarWidth, setProgressBarWidth] = useState(0);
+
+  // Blob URL ref for cleanup (web only)
+  const blobUrlRef = useRef<string | null>(null);
+
+  /**
+   * Audio player using useAudioPlayer hook per Expo Audio docs
+   * The hook manages the player's lifecycle automatically
+   */
+  const player = useAudioPlayer(audioUri ? { uri: audioUri } : null);
+  
+  /**
+   * Real-time playback status using useAudioPlayerStatus hook
+   * Returns playing, currentTime, duration, isBuffering, etc.
+   */
+  const status = useAudioPlayerStatus(player);
 
   const title = meeting?.title || "Meeting";
   const transcript = meeting?.transcript;
   const segments = meeting?.segments;
 
-  // Audio playback
-  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
-    if (!status.isLoaded) {
-      if (status.error) {
-        console.error("[AudioPlayer] Playback error:", status.error);
-      }
-      return;
-    }
-
-    setIsPlaying(status.isPlaying);
-    setPositionMillis(status.positionMillis || 0);
-    setDurationMillis(status.durationMillis || 0);
-
-    if (status.didJustFinish) {
-      setIsPlaying(false);
-      setPositionMillis(0);
-    }
-  }, []);
-
+  /**
+   * Load audio from Supabase Storage
+   * Downloads the file and creates a URI for playback
+   */
   const loadAudio = useCallback(async () => {
     // Prefer MP3 if available, fallback to raw audio
     const audioPath = meeting?.mp3_audio_path || meeting?.raw_audio_path;
-    if (!audioPath || soundRef.current) return;
+    if (!audioPath || audioUri) return;
 
     try {
       console.log("[AudioPlayer] Loading audio from path:", audioPath);
@@ -167,6 +185,7 @@ export default function MeetingDetailScreen() {
       setAudioLoadError(false);
       setAudioErrorMessage(null);
 
+      // Download audio from Supabase Storage
       const { data: audioBlob, error: downloadError } = await supabase.storage
         .from("meeting-audio")
         .download(audioPath);
@@ -180,14 +199,16 @@ export default function MeetingDetailScreen() {
 
       console.log("[AudioPlayer] Audio downloaded, size:", audioBlob.size);
 
-      let audioUri: string;
+      let newAudioUri: string;
 
       if (Platform.OS === "web") {
-        audioUri = URL.createObjectURL(audioBlob);
-        blobUrlRef.current = audioUri;
+        // On web, create a blob URL
+        newAudioUri = URL.createObjectURL(audioBlob);
+        blobUrlRef.current = newAudioUri;
       } else {
+        // On native, convert to data URI
         const reader = new FileReader();
-        audioUri = await new Promise<string>((resolve, reject) => {
+        newAudioUri = await new Promise<string>((resolve, reject) => {
           reader.onloadend = () => {
             if (typeof reader.result === "string") {
               resolve(reader.result);
@@ -200,18 +221,12 @@ export default function MeetingDetailScreen() {
         });
       }
 
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-      });
+      // Configure audio mode for playback per Expo Audio docs
+      await setAudioModeAsync(PLAYBACK_AUDIO_MODE);
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: audioUri },
-        { shouldPlay: false, progressUpdateIntervalMillis: 100 },
-        onPlaybackStatusUpdate
-      );
-
-      soundRef.current = sound;
+      // Set the audio URI - this will update the player via useAudioPlayer
+      setAudioUri(newAudioUri);
+      
       setAudioLoadError(false);
       setAudioErrorMessage(null);
       console.log("[AudioPlayer] Audio loaded successfully");
@@ -222,38 +237,49 @@ export default function MeetingDetailScreen() {
     } finally {
       setIsAudioLoading(false);
     }
-  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, onPlaybackStatusUpdate]);
+  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, audioUri]);
 
+  /**
+   * Load audio when meeting is ready
+   */
   useEffect(() => {
-    const canLoadAudio = (meeting?.mp3_audio_path || meeting?.raw_audio_path) && meeting?.status === "ready";
+    const canLoadAudio = 
+      (meeting?.mp3_audio_path || meeting?.raw_audio_path) && 
+      meeting?.status === "ready";
 
     if (canLoadAudio) {
       loadAudio();
     }
+  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, meeting?.status, loadAudio]);
 
+  /**
+   * Cleanup on unmount
+   */
+  useEffect(() => {
     return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(() => {});
-        soundRef.current = null;
-      }
+      // Revoke blob URL on web
       if (blobUrlRef.current && Platform.OS === "web") {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
     };
-  }, [meeting?.mp3_audio_path, meeting?.raw_audio_path, meeting?.status, loadAudio]);
+  }, []);
 
+  /**
+   * Handle play/pause
+   * Uses player.play() and player.pause() per Expo Audio docs
+   */
   const handlePlayPause = async () => {
-    if (!soundRef.current) {
+    if (!audioUri) {
       await loadAudio();
       return;
     }
 
     try {
-      if (isPlaying) {
-        await soundRef.current.pauseAsync();
+      if (status.playing) {
+        player.pause();
       } else {
-        await soundRef.current.playAsync();
+        player.play();
       }
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -263,15 +289,19 @@ export default function MeetingDetailScreen() {
     }
   };
 
+  /**
+   * Handle seek via progress bar tap
+   * Uses player.seekTo(seconds) per Expo Audio docs
+   */
   const handleSeek = async (event: { nativeEvent: { locationX: number } }) => {
-    if (!soundRef.current || !durationMillis || !progressBarWidth) return;
+    if (!status.duration || !progressBarWidth) return;
 
     const x = event.nativeEvent.locationX;
     const percentage = Math.max(0, Math.min(1, x / progressBarWidth));
-    const seekPosition = percentage * durationMillis;
+    const seekPositionSeconds = percentage * status.duration;
 
     try {
-      await soundRef.current.setPositionAsync(seekPosition);
+      await player.seekTo(seekPositionSeconds);
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -280,10 +310,16 @@ export default function MeetingDetailScreen() {
     }
   };
 
+  /**
+   * Handle seek to specific timestamp (from transcript)
+   */
   const handleSeekToTimestamp = async (ms: number) => {
-    if (!soundRef.current) return;
+    if (!audioUri) return;
     try {
-      await soundRef.current.setPositionAsync(ms);
+      await player.seekTo(ms / 1000);
+      if (!status.playing) {
+        player.play();
+      }
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -292,15 +328,22 @@ export default function MeetingDetailScreen() {
     }
   };
 
-  const formatTime = (millis: number) => {
-    const totalSeconds = Math.floor(millis / 1000);
+  /**
+   * Format time for display
+   */
+  const formatTime = (seconds: number) => {
+    const totalSeconds = Math.floor(seconds);
     const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+    const secs = totalSeconds % 60;
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const progress = durationMillis > 0 ? (positionMillis / durationMillis) * 100 : 0;
+  // Calculate progress percentage
+  const progress = status.duration > 0 ? (status.currentTime / status.duration) * 100 : 0;
 
+  /**
+   * Handle meeting deletion
+   */
   const handleDelete = async () => {
     if (!id) return;
 
@@ -329,6 +372,9 @@ export default function MeetingDetailScreen() {
     }
   };
 
+  /**
+   * Handle retry processing
+   */
   const handleRetry = async () => {
     if (!id) return;
     try {
@@ -339,6 +385,9 @@ export default function MeetingDetailScreen() {
     }
   };
 
+  /**
+   * Handle share
+   */
   const handleShare = async () => {
     const shareText = `
 ${title}
@@ -363,6 +412,7 @@ ${transcript?.summary || "No summary available"}
     }
   };
 
+  // Loading state
   if (isLoading || !meeting) {
     return (
       <SafeAreaView style={styles.container}>
@@ -430,6 +480,11 @@ ${transcript?.summary || "No summary available"}
             <Text style={styles.detailLabel}>Duration:</Text>
             <Text style={styles.detailText}>{formatDuration(meeting.duration_seconds)}</Text>
           </View>
+          {meeting.used_streaming_transcription && (
+            <View style={styles.detailRow}>
+              <Text style={styles.streamingBadge}>Live Transcribed</Text>
+            </View>
+          )}
         </View>
 
         {/* Summary Card */}
@@ -463,6 +518,21 @@ ${transcript?.summary || "No summary available"}
           </View>
         )}
 
+        {/* Segments Preview (if streaming was used) */}
+        {segments && segments.length > 0 && !transcript?.full_text && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Transcript Segments</Text>
+              <Pressable onPress={() => setShowTranscript(true)}>
+                <Text style={styles.viewAllLink}>View All ({segments.length})</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.transcriptPreview} numberOfLines={4}>
+              {segments.slice(0, 3).map(s => `${s.speaker}: ${s.text}`).join('\n')}
+            </Text>
+          </View>
+        )}
+
         {/* Error Message */}
         {meeting.error_message && (
           <View style={styles.errorCard}>
@@ -474,7 +544,7 @@ ${transcript?.summary || "No summary available"}
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* Audio Player */}
+      {/* Audio Player Bar */}
       {shouldShowAudioBar && (
         <View style={styles.audioBar}>
           {audioLoadError ? (
@@ -491,8 +561,14 @@ ${transcript?.summary || "No summary available"}
             </View>
           ) : (
             <>
-              <Pressable style={styles.playButton} onPress={handlePlayPause} disabled={isAudioLoading}>
-                {isPlaying ? (
+              <Pressable 
+                style={styles.playButton} 
+                onPress={handlePlayPause} 
+                disabled={isAudioLoading || status.isBuffering}
+              >
+                {status.isBuffering ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : status.playing ? (
                   <Pause size={20} color={Colors.text} fill={Colors.text} />
                 ) : (
                   <Play size={20} color={Colors.text} fill={Colors.text} />
@@ -510,7 +586,7 @@ ${transcript?.summary || "No summary available"}
               </Pressable>
 
               <Text style={styles.audioTime}>
-                {formatTime(positionMillis)} / {formatTime(durationMillis || meeting.duration_seconds * 1000)}
+                {formatTime(status.currentTime || 0)} / {formatTime(status.duration || meeting.duration_seconds)}
               </Text>
 
               {segments && segments.length > 0 && (
@@ -626,6 +702,15 @@ const styles = StyleSheet.create({
   detailText: {
     fontSize: 14,
     color: Colors.text,
+  },
+  streamingBadge: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#10B981",
+    backgroundColor: "#10B981" + "20",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   card: {
     backgroundColor: Colors.surface,
