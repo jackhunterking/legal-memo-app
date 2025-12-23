@@ -12,7 +12,14 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+} from "expo-audio";
+import * as FileSystem from "expo-file-system/legacy";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -24,86 +31,53 @@ export default function RecordingScreen() {
   const { uploadAudio, updateMeeting } = useMeetings();
   const { user } = useAuth();
 
-  const [isPaused, setIsPaused] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [recordedAt, setRecordedAt] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const hasStartedRecording = useRef(false);
+  const [hasStartedRecording, setHasStartedRecording] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const recordingRef = useRef<Audio.Recording | null>(null);
+
+  // Use the new expo-audio hooks
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, (status) => {
+    // Recording status callback
+    if (status.isFinished) {
+      console.log("[Recording] Recording finished");
+    }
+  });
+  
+  const recorderState = useAudioRecorderState(audioRecorder);
 
   const startRecording = useCallback(async () => {
-    if (hasStartedRecording.current) return;
-    hasStartedRecording.current = true;
+    if (hasStartedRecording) return;
+    setHasStartedRecording(true);
 
     try {
-      // Request recording permissions
+      // Request recording permissions using new API
       console.log("[Recording] Requesting recording permissions...");
-      const { status } = await Audio.requestPermissionsAsync();
+      const status = await AudioModule.requestRecordingPermissionsAsync();
       console.log("[Recording] Permission status:", status);
       
-      if (status !== "granted") {
+      if (!status.granted) {
         throw new Error("Microphone permission was denied. Please grant microphone access in your device settings.");
       }
 
-      // Configure audio mode for recording
+      // Configure audio mode for recording using new API
       console.log("[Recording] Setting audio mode...");
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
       
-      // Create and start recording with high quality settings
-      console.log("[Recording] Creating recording instance...");
-      const { recording } = await Audio.Recording.createAsync(
-        {
-          isMeteringEnabled: true,
-          android: {
-            extension: '.m4a',
-            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-            audioEncoder: Audio.AndroidAudioEncoder.AAC,
-            sampleRate: 44100,
-            numberOfChannels: 2,
-            bitRate: 128000,
-          },
-          ios: {
-            extension: '.m4a',
-            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-            audioQuality: Audio.IOSAudioQuality.HIGH,
-            sampleRate: 44100,
-            numberOfChannels: 2,
-            bitRate: 128000,
-          },
-          web: {
-            mimeType: 'audio/webm;codecs=opus',
-            bitsPerSecond: 128000,
-          },
-        },
-        (status) => {
-          // Recording status callback
-          if (status.isRecording) {
-            console.log("[Recording] Metering:", status.metering);
-          }
-        },
-        100 // Update every 100ms
-      );
+      // Prepare and start recording
+      console.log("[Recording] Preparing recorder...");
+      await audioRecorder.prepareToRecordAsync();
       
-      recordingRef.current = recording;
-      setIsRecording(true);
+      console.log("[Recording] Starting recording...");
+      audioRecorder.record();
+      
       setRecordedAt(new Date().toISOString());
-      
-      // Verify recording started
-      const recordingStatus = await recording.getStatusAsync();
-      console.log("[Recording] Initial status:", recordingStatus);
-      
-      if (!recordingStatus.isRecording) {
-        throw new Error("Failed to start recording. The recorder is not in a valid state.");
-      }
-      
       console.log("[Recording] Recording started successfully!");
     } catch (err) {
       console.error("[Recording] Start error:", err);
@@ -116,7 +90,7 @@ export default function RecordingScreen() {
       }
       router.back();
     }
-  }, [router]);
+  }, [hasStartedRecording, audioRecorder, router]);
 
   useEffect(() => {
     startRecording();
@@ -124,7 +98,7 @@ export default function RecordingScreen() {
 
   // Pulse animation for recording indicator
   useEffect(() => {
-    if (isRecording && !isPaused) {
+    if (recorderState.isRecording && !isUploading) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -142,14 +116,16 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [isRecording, isPaused, pulseAnim]);
+  }, [recorderState.isRecording, isUploading, pulseAnim]);
 
-  // Timer
+  // Timer - update based on recorder state
   useEffect(() => {
-    if (isRecording && !isPaused) {
+    if (recorderState.isRecording) {
       timerRef.current = setInterval(() => {
-        setElapsedSeconds((s) => s + 1);
-      }, 1000);
+        // Use the recorder's duration if available, otherwise use elapsed seconds
+        const durationSec = Math.floor(recorderState.durationMillis / 1000);
+        setElapsedSeconds(durationSec);
+      }, 500);
     } else {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -162,32 +138,20 @@ export default function RecordingScreen() {
         clearInterval(timerRef.current);
       }
     };
-  }, [isRecording, isPaused]);
-
-  // Cleanup recording on unmount
-  useEffect(() => {
-    return () => {
-      if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(console.error);
-      }
-    };
-  }, []);
+  }, [recorderState.isRecording, recorderState.durationMillis]);
 
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    const recording = recordingRef.current;
-    if (!recording) return;
-
     try {
-      if (isPaused) {
-        await recording.startAsync();
-        setIsPaused(false);
+      if (!recorderState.isRecording) {
+        // Resume recording
+        audioRecorder.record();
       } else {
-        await recording.pauseAsync();
-        setIsPaused(true);
+        // Pause recording
+        audioRecorder.pause();
       }
     } catch (err) {
       console.error("[Recording] Pause/Resume error:", err);
@@ -220,51 +184,100 @@ export default function RecordingScreen() {
   const performStop = async () => {
     if (!meetingId || !user?.id) return;
 
-    const recording = recordingRef.current;
-    if (!recording) {
-      console.error("[Recording] No recording instance found");
-      Alert.alert("Error", "No active recording found.");
-      return;
-    }
-
     setIsUploading(true);
-    setIsRecording(false);
 
     try {
-      // Get status before stopping
-      const statusBeforeStop = await recording.getStatusAsync();
-      console.log("[Recording] Status before stop:", JSON.stringify(statusBeforeStop));
-      console.log("[Recording] Duration:", statusBeforeStop.durationMillis, "ms");
+      // Get duration before stopping
+      const durationMs = recorderState.durationMillis;
+      console.log("[Recording] Duration before stop:", durationMs, "ms");
       
       // Validate minimum recording duration
-      if (statusBeforeStop.durationMillis < 1000) {
+      if (durationMs < 1000) {
         throw new Error("Recording too short. Please record for at least 1 second.");
       }
       
-      console.log("[Recording] Stopping and unloading recording...");
-      await recording.stopAndUnloadAsync();
+      console.log("[Recording] Stopping recording...");
+      await audioRecorder.stop();
       
       // Reset audio mode
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
       });
       
-      const uri = recording.getURI();
+      // Get the URI from the recorder
+      const uri = audioRecorder.uri;
       console.log("[Recording] Stopped, URI:", uri);
 
       if (!uri) {
         throw new Error("No recording URI available. The recording may have failed.");
       }
 
-      // Get the audio blob
-      console.log("[Recording] Fetching audio from URI...");
-      const response = await fetch(uri);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch audio: ${response.statusText}`);
+      // Get the audio data using expo-file-system (fixes iOS fetch issue with file:// URIs)
+      console.log("[Recording] Reading audio file from URI...");
+      
+      let blob: Blob;
+      let contentType: string;
+      let fileExtension: string;
+      let audioFormat: string;
+      
+      if (Platform.OS === "web") {
+        // On web, use fetch as it works correctly
+        const response = await fetch(uri);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio: ${response.statusText}`);
+        }
+        blob = await response.blob();
+        contentType = blob.type || "audio/webm";
+        const isWebm = contentType.includes("webm") || contentType.includes("ogg");
+        fileExtension = isWebm ? "webm" : "m4a";
+        audioFormat = isWebm ? "webm" : "m4a";
+        console.log("[Recording] Web audio format:", contentType, "->", audioFormat);
+      } else {
+        // On native (iOS/Android), use expo-file-system to read the file
+        // This fixes the issue where fetch(file://) returns an empty blob on iOS
+        
+        // First, verify the file exists and get its info
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        console.log("[Recording] File info:", JSON.stringify(fileInfo));
+        
+        if (!fileInfo.exists) {
+          throw new Error("Recording file does not exist. The recording may have failed.");
+        }
+        
+        if (fileInfo.size === 0) {
+          throw new Error("Recording file is empty (0 bytes). This may indicate a recording failure.");
+        }
+        
+        // Read the file as base64
+        console.log("[Recording] Reading file as base64...");
+        const base64Data = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        
+        console.log("[Recording] Base64 data length:", base64Data.length, "characters");
+        
+        if (!base64Data || base64Data.length === 0) {
+          throw new Error("Failed to read audio file data.");
+        }
+        
+        // Convert base64 to blob
+        // Decode base64 to binary
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Native (iOS/Android) uses M4A format
+        contentType = "audio/mp4";
+        fileExtension = "m4a";
+        audioFormat = "m4a";
+        
+        blob = new Blob([bytes], { type: contentType });
+        console.log("[Recording] Created blob from file, size:", blob.size, "bytes (file size:", fileInfo.size, ")");
       }
       
-      const blob = await response.blob();
       console.log("[Recording] Blob size:", blob.size, "bytes, type:", blob.type);
       
       // Validate that we have actual audio data
@@ -275,24 +288,6 @@ export default function RecordingScreen() {
       if (blob.size < 1000) {
         // Audio file too small to be valid (less than 1KB)
         throw new Error(`Recording file is too small (${blob.size} bytes). Please try recording again for a longer duration.`);
-      }
-      
-      // Determine file format based on platform
-      let fileExtension: string;
-      let contentType: string;
-      let audioFormat: string;
-      
-      if (Platform.OS === "web") {
-        contentType = blob.type || "audio/webm";
-        const isWebm = contentType.includes("webm") || contentType.includes("ogg");
-        fileExtension = isWebm ? "webm" : "m4a";
-        audioFormat = isWebm ? "webm" : "m4a";
-        console.log("[Recording] Web audio format:", contentType, "->", audioFormat);
-      } else {
-        // Native (iOS/Android) uses M4A format
-        contentType = "audio/mp4";
-        fileExtension = "m4a";
-        audioFormat = "m4a";
       }
       
       // Upload path: user_id/meeting_id/audio.ext
@@ -320,7 +315,7 @@ export default function RecordingScreen() {
         meetingId,
         audioPath,
         audioFormat,
-        durationSeconds: Math.round(statusBeforeStop.durationMillis / 1000),
+        durationSeconds: Math.round(durationMs / 1000),
         recordedAt: recordedAt || new Date().toISOString(),
       });
 
@@ -346,8 +341,6 @@ export default function RecordingScreen() {
       if (Platform.OS !== "web") {
         Alert.alert("Recording Error", err instanceof Error ? err.message : "Failed to save recording. Please try again.");
       }
-    } finally {
-      recordingRef.current = null;
     }
   };
 
@@ -361,6 +354,8 @@ export default function RecordingScreen() {
     }
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
+
+  const isPaused = recorderState.canRecord && !recorderState.isRecording && hasStartedRecording;
 
   return (
     <SafeAreaView style={styles.container}>
