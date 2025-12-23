@@ -310,28 +310,29 @@ Deno.serve(async (req: Request) => {
       return errorResponse("Server configuration error: ASSEMBLYAI_API_KEY not configured", 500);
     }
 
-    // Get the auth header
+    // Get the auth header - per Supabase guidance for Edge Functions
     const authHeader = req.headers.get("Authorization");
     console.log("[streaming-transcribe] Auth header present:", !!authHeader);
     
-    if (!authHeader) {
-      return errorResponse("Missing Authorization header", 401);
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return errorResponse("Missing or invalid Authorization header", 401);
     }
 
-    // Create a Supabase client with the user's auth header to validate the token
-    // This is the correct way to validate JWT tokens in Edge Functions
+    // Extract JWT token from "Bearer <token>" - this is the correct way per Supabase
+    const jwt = authHeader.replace("Bearer ", "");
+    console.log("[streaming-transcribe] JWT extracted, length:", jwt.length);
+
+    // Create a Supabase client for auth validation
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: { Authorization: authHeader },
-      },
       auth: {
         persistSession: false,
         autoRefreshToken: false,
       },
     });
 
-    // Validate the user's token by getting the user
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+    // Validate the user's token by passing JWT directly to getUser()
+    // This is the correct way to validate JWT tokens in Edge Functions per Supabase docs
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt);
     
     console.log("[streaming-transcribe] Auth result - user:", !!user, "error:", userError?.message || "none");
 
