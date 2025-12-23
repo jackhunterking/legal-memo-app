@@ -61,7 +61,9 @@ export default function RecordingScreen() {
   }, [audioRecorder]);
 
   const checkAndRequestPermission = useCallback(async () => {
-    if (isRequestingPermission) return false;
+    if (isRequestingPermission) {
+      return false;
+    }
     
     setIsRequestingPermission(true);
     
@@ -83,10 +85,14 @@ export default function RecordingScreen() {
         setHasPermission(true);
         setPermissionDenied(false);
         
-        await setAudioModeAsync({
-          playsInSilentMode: true,
-          allowsRecording: true,
-        });
+        try {
+          await setAudioModeAsync({
+            playsInSilentMode: true,
+            allowsRecording: true,
+          });
+        } catch (audioModeErr) {
+          console.error("[Recording] setAudioModeAsync error:", audioModeErr);
+        }
         
         return true;
       }
@@ -117,10 +123,14 @@ export default function RecordingScreen() {
       setPermissionDenied(!granted);
 
       if (granted) {
-        await setAudioModeAsync({
-          playsInSilentMode: true,
-          allowsRecording: true,
-        });
+        try {
+          await setAudioModeAsync({
+            playsInSilentMode: true,
+            allowsRecording: true,
+          });
+        } catch (audioModeErr) {
+          console.error("[Recording] setAudioModeAsync error:", audioModeErr);
+        }
       }
       
       return granted;

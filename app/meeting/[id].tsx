@@ -1433,9 +1433,13 @@ export default function MeetingDetailScreen() {
   }, []);
 
   const loadAudio = useCallback(async () => {
-    if (!meeting?.audio_path || soundRef.current) return;
+    if (!meeting?.audio_path || soundRef.current) {
+      console.log("[AudioPlayer] Skipping load - path:", meeting?.audio_path, "soundRef exists:", !!soundRef.current);
+      return;
+    }
 
     try {
+      console.log("[AudioPlayer] Loading audio from path:", meeting.audio_path);
       setIsAudioLoading(true);
       setAudioLoadError(false);
       setAudioErrorMessage(null);
@@ -1445,10 +1449,13 @@ export default function MeetingDetailScreen() {
         .download(meeting.audio_path);
 
       if (downloadError || !audioBlob) {
+        console.error("[AudioPlayer] Download error:", downloadError);
         setAudioLoadError(true);
-        setAudioErrorMessage("Could not download audio");
+        setAudioErrorMessage(downloadError?.message || "Could not download audio");
         return;
       }
+      
+      console.log("[AudioPlayer] Audio downloaded, size:", audioBlob.size, "type:", audioBlob.type);
 
       const blobType = audioBlob.type || "";
       const filePath = meeting.audio_path.toLowerCase();
@@ -1514,9 +1521,13 @@ export default function MeetingDetailScreen() {
       soundRef.current = sound;
       setAudioLoadError(false);
       setAudioErrorMessage(null);
-    } catch {
+      console.log("[AudioPlayer] Audio loaded successfully");
+    } catch (error) {
+      console.error("[AudioPlayer] Failed to load audio:", error);
       setAudioLoadError(true);
-      setAudioErrorMessage("Could not play audio");
+      setAudioErrorMessage(
+        error instanceof Error ? error.message : "Could not play audio"
+      );
     } finally {
       setIsAudioLoading(false);
     }
@@ -1825,7 +1836,17 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
     );
   }
 
-  const audioBarHeight = meeting.audio_path && meeting.status === "ready" ? 80 : 0;
+  // Audio bar should show if meeting has audio and is ready, even if transcoding in progress
+  const shouldShowAudioBar = !!(meeting.audio_path && meeting.status === "ready");
+  const audioBarHeight = shouldShowAudioBar ? 80 : 0;
+  
+  // Log for debugging
+  console.log("[MeetingDetail] Audio bar state:", {
+    audioPath: meeting.audio_path,
+    status: meeting.status,
+    audioFormat: meeting.audio_format,
+    shouldShowAudioBar,
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -2326,7 +2347,7 @@ ${unifiedActions.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}
       </ScrollView>
 
       {/* Audio Player */}
-      {meeting.audio_path && meeting.status === "ready" && (
+      {shouldShowAudioBar && (
         <View style={styles.audioBar}>
           {meeting.audio_format === "transcoding" ? (
             <View style={styles.audioErrorContainer}>
