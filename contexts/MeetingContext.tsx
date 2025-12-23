@@ -87,7 +87,6 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       
       // Update meeting with audio info and set status to 'queued'
       // This will trigger the database trigger to create a processing job
-      // The Edge Function will be invoked via webhook
       const { error } = await supabase
         .from('meetings')
         .update({
@@ -104,18 +103,27 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
         throw new Error(error.message || 'Failed to update meeting');
       }
       
-      // Also explicitly trigger the Edge Function (backup in case DB trigger doesn't work)
-      try {
-        console.log('[MeetingContext] Triggering processing...');
-        await supabase.functions.invoke('process-recording', {
-          body: { meeting_id: meetingId },
-        });
-      } catch (err) {
-        console.warn('[MeetingContext] Failed to trigger Edge Function (may still work via DB trigger):', err);
-        // Don't throw - the DB trigger may still invoke the function
+      // Explicitly trigger the Edge Function
+      // Note: The function now has verify_jwt=false so it can be called without auth
+      console.log('[MeetingContext] Triggering processing Edge Function...');
+      const { data, error: functionError } = await supabase.functions.invoke('process-recording', {
+        body: { meeting_id: meetingId },
+      });
+      
+      if (functionError) {
+        console.error('[MeetingContext] Error triggering Edge Function:', functionError);
+        // Update meeting status to failed
+        await supabase
+          .from('meetings')
+          .update({ 
+            status: 'failed', 
+            error_message: `Failed to start processing: ${functionError.message}` 
+          })
+          .eq('id', meetingId);
+        throw new Error(`Failed to start processing: ${functionError.message}`);
       }
       
-      console.log('[MeetingContext] Audio uploaded and processing queued');
+      console.log('[MeetingContext] Processing triggered successfully:', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
@@ -222,16 +230,25 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
         });
       
       // Trigger the Edge Function
-      const { error } = await supabase.functions.invoke('process-recording', {
+      console.log('[MeetingContext] Triggering Edge Function for retry...');
+      const { data, error } = await supabase.functions.invoke('process-recording', {
         body: { meeting_id: meetingId },
       });
       
       if (error) {
         console.error('[MeetingContext] Error retrying processing:', error);
-        throw new Error('Failed to retry processing');
+        // Update meeting status to failed
+        await supabase
+          .from('meetings')
+          .update({ 
+            status: 'failed', 
+            error_message: `Failed to retry processing: ${error.message}` 
+          })
+          .eq('id', meetingId);
+        throw new Error(`Failed to retry processing: ${error.message}`);
       }
       
-      console.log('[MeetingContext] Retry triggered');
+      console.log('[MeetingContext] Retry triggered successfully:', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] });

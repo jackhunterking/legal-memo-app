@@ -54,13 +54,18 @@ export default function RecordingScreen() {
       
       console.log("[Recording] Starting recording...");
       await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
+      const recordingStarted = await audioRecorder.record();
+      console.log("[Recording] Record() returned:", recordingStarted);
       setRecordedAt(new Date().toISOString());
-      console.log("[Recording] Recording started");
+      console.log("[Recording] Recording started successfully");
     } catch (err) {
       console.error("[Recording] Start error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
       if (Platform.OS !== "web") {
-        Alert.alert("Error", "Failed to start recording. Please try again.");
+        Alert.alert(
+          "Recording Error", 
+          `Failed to start recording: ${errorMessage}\n\nPlease ensure microphone permissions are granted.`
+        );
       }
       router.back();
     }
@@ -165,8 +170,24 @@ export default function RecordingScreen() {
       }
 
       // Get the audio blob
+      console.log("[Recording] Fetching audio from URI...");
       const response = await fetch(uri);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch audio: ${response.statusText}`);
+      }
+      
       const blob = await response.blob();
+      console.log("[Recording] Blob size:", blob.size, "bytes, type:", blob.type);
+      
+      // Validate that we have actual audio data
+      if (blob.size === 0) {
+        throw new Error("Recording is empty. Please ensure microphone permissions are granted and try again.");
+      }
+      
+      if (blob.size < 100) {
+        // Audio file too small to be valid
+        throw new Error("Recording is too short or corrupted. Please try recording again.");
+      }
       
       // Determine file format based on platform
       // Web browsers typically record in WebM format, native apps use M4A
@@ -190,7 +211,7 @@ export default function RecordingScreen() {
       // Upload path: user_id/meeting_id/audio.ext
       const audioPath = `${user.id}/${meetingId}/audio.${fileExtension}`;
 
-      console.log("[Recording] Uploading to:", audioPath);
+      console.log("[Recording] Uploading", blob.size, "bytes to:", audioPath);
 
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
