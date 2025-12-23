@@ -12,13 +12,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import {
-  useAudioRecorder,
-  RecordingPresets,
-  useAudioRecorderState,
-  setAudioModeAsync,
-  AudioModule,
-} from "expo-audio";
+import { Audio } from "expo-av";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -34,50 +28,83 @@ export default function RecordingScreen() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [recordedAt, setRecordedAt] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const hasStartedRecording = useRef(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(audioRecorder);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const startRecording = useCallback(async () => {
     if (hasStartedRecording.current) return;
     hasStartedRecording.current = true;
 
     try {
-      // CRITICAL: Request recording permissions explicitly
+      // Request recording permissions
       console.log("[Recording] Requesting recording permissions...");
-      const permissionStatus = await AudioModule.requestRecordingPermissionsAsync();
-      console.log("[Recording] Permission status:", permissionStatus);
+      const { status } = await Audio.requestPermissionsAsync();
+      console.log("[Recording] Permission status:", status);
       
-      if (!permissionStatus.granted) {
+      if (status !== "granted") {
         throw new Error("Microphone permission was denied. Please grant microphone access in your device settings.");
       }
 
+      // Configure audio mode for recording
       console.log("[Recording] Setting audio mode...");
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        allowsRecording: true,
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
       });
       
-      console.log("[Recording] Preparing to record...");
-      await audioRecorder.prepareToRecordAsync();
+      // Create and start recording with high quality settings
+      console.log("[Recording] Creating recording instance...");
+      const { recording } = await Audio.Recording.createAsync(
+        {
+          isMeteringEnabled: true,
+          android: {
+            extension: '.m4a',
+            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+            audioEncoder: Audio.AndroidAudioEncoder.AAC,
+            sampleRate: 44100,
+            numberOfChannels: 2,
+            bitRate: 128000,
+          },
+          ios: {
+            extension: '.m4a',
+            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+            audioQuality: Audio.IOSAudioQuality.HIGH,
+            sampleRate: 44100,
+            numberOfChannels: 2,
+            bitRate: 128000,
+          },
+          web: {
+            mimeType: 'audio/webm;codecs=opus',
+            bitsPerSecond: 128000,
+          },
+        },
+        (status) => {
+          // Recording status callback
+          if (status.isRecording) {
+            console.log("[Recording] Metering:", status.metering);
+          }
+        },
+        100 // Update every 100ms
+      );
       
-      console.log("[Recording] Starting recording...");
-      audioRecorder.record();
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setRecordedAt(new Date().toISOString());
       
-      // Verify recording actually started
-      const status = audioRecorder.getStatus();
-      console.log("[Recording] Recorder status after start:", status);
+      // Verify recording started
+      const recordingStatus = await recording.getStatusAsync();
+      console.log("[Recording] Initial status:", recordingStatus);
       
-      if (!status.isRecording && !status.canRecord) {
+      if (!recordingStatus.isRecording) {
         throw new Error("Failed to start recording. The recorder is not in a valid state.");
       }
       
-      setRecordedAt(new Date().toISOString());
-      console.log("[Recording] Recording started successfully");
+      console.log("[Recording] Recording started successfully!");
     } catch (err) {
       console.error("[Recording] Start error:", err);
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
@@ -89,7 +116,7 @@ export default function RecordingScreen() {
       }
       router.back();
     }
-  }, [audioRecorder, router]);
+  }, [router]);
 
   useEffect(() => {
     startRecording();
@@ -97,7 +124,7 @@ export default function RecordingScreen() {
 
   // Pulse animation for recording indicator
   useEffect(() => {
-    if (recorderState.isRecording && !isPaused) {
+    if (isRecording && !isPaused) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -115,11 +142,11 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [recorderState.isRecording, isPaused, pulseAnim]);
+  }, [isRecording, isPaused, pulseAnim]);
 
   // Timer
   useEffect(() => {
-    if (recorderState.isRecording && !isPaused) {
+    if (isRecording && !isPaused) {
       timerRef.current = setInterval(() => {
         setElapsedSeconds((s) => s + 1);
       }, 1000);
@@ -135,19 +162,35 @@ export default function RecordingScreen() {
         clearInterval(timerRef.current);
       }
     };
-  }, [recorderState.isRecording, isPaused]);
+  }, [isRecording, isPaused]);
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(console.error);
+      }
+    };
+  }, []);
 
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    if (isPaused) {
-      audioRecorder.record();
-      setIsPaused(false);
-    } else {
-      audioRecorder.pause();
-      setIsPaused(true);
+    const recording = recordingRef.current;
+    if (!recording) return;
+
+    try {
+      if (isPaused) {
+        await recording.startAsync();
+        setIsPaused(false);
+      } else {
+        await recording.pauseAsync();
+        setIsPaused(true);
+      }
+    } catch (err) {
+      console.error("[Recording] Pause/Resume error:", err);
     }
   };
 
@@ -177,25 +220,41 @@ export default function RecordingScreen() {
   const performStop = async () => {
     if (!meetingId || !user?.id) return;
 
+    const recording = recordingRef.current;
+    if (!recording) {
+      console.error("[Recording] No recording instance found");
+      Alert.alert("Error", "No active recording found.");
+      return;
+    }
+
     setIsUploading(true);
+    setIsRecording(false);
 
     try {
-      // Check recorder status before stopping
-      const statusBeforeStop = audioRecorder.getStatus();
+      // Get status before stopping
+      const statusBeforeStop = await recording.getStatusAsync();
       console.log("[Recording] Status before stop:", JSON.stringify(statusBeforeStop));
-      console.log("[Recording] isRecording:", statusBeforeStop.isRecording);
-      console.log("[Recording] canRecord:", statusBeforeStop.canRecord);
       console.log("[Recording] Duration:", statusBeforeStop.durationMillis, "ms");
       
-      console.log("[Recording] Stopping recording...");
-      await audioRecorder.stop();
+      // Validate minimum recording duration
+      if (statusBeforeStop.durationMillis < 1000) {
+        throw new Error("Recording too short. Please record for at least 1 second.");
+      }
       
-      const uri = audioRecorder.uri;
+      console.log("[Recording] Stopping and unloading recording...");
+      await recording.stopAndUnloadAsync();
+      
+      // Reset audio mode
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      });
+      
+      const uri = recording.getURI();
       console.log("[Recording] Stopped, URI:", uri);
-      console.log("[Recording] URI type:", typeof uri);
 
       if (!uri) {
-        throw new Error("No recording URI");
+        throw new Error("No recording URI available. The recording may have failed.");
       }
 
       // Get the audio blob
@@ -210,16 +269,15 @@ export default function RecordingScreen() {
       
       // Validate that we have actual audio data
       if (blob.size === 0) {
-        throw new Error("Recording is empty. Please ensure microphone permissions are granted and try again.");
+        throw new Error("Recording is empty (0 bytes). This may be due to microphone permission issues. Please check your device settings and try again.");
       }
       
-      if (blob.size < 100) {
-        // Audio file too small to be valid
-        throw new Error("Recording is too short or corrupted. Please try recording again.");
+      if (blob.size < 1000) {
+        // Audio file too small to be valid (less than 1KB)
+        throw new Error(`Recording file is too small (${blob.size} bytes). Please try recording again for a longer duration.`);
       }
       
       // Determine file format based on platform
-      // Web browsers typically record in WebM format, native apps use M4A
       let fileExtension: string;
       let contentType: string;
       let audioFormat: string;
@@ -262,7 +320,7 @@ export default function RecordingScreen() {
         meetingId,
         audioPath,
         audioFormat,
-        durationSeconds: elapsedSeconds,
+        durationSeconds: Math.round(statusBeforeStop.durationMillis / 1000),
         recordedAt: recordedAt || new Date().toISOString(),
       });
 
@@ -286,8 +344,10 @@ export default function RecordingScreen() {
       }
       
       if (Platform.OS !== "web") {
-        Alert.alert("Error", "Failed to save recording. Please try again.");
+        Alert.alert("Recording Error", err instanceof Error ? err.message : "Failed to save recording. Please try again.");
       }
+    } finally {
+      recordingRef.current = null;
     }
   };
 

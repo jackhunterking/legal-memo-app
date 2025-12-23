@@ -112,15 +112,33 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       
       if (functionError) {
         console.error('[MeetingContext] Error triggering Edge Function:', functionError);
+        
+        // Try to get more details from the error response
+        let errorMessage = functionError.message || 'Edge Function failed';
+        
+        // If it's a FunctionsHttpError, try to parse the response body for details
+        if (functionError.name === 'FunctionsHttpError' && data) {
+          try {
+            const errorData = typeof data === 'string' ? JSON.parse(data) : data;
+            if (errorData?.error) {
+              errorMessage = errorData.error;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+        
+        console.error('[MeetingContext] Detailed error:', errorMessage);
+        
         // Update meeting status to failed
         await supabase
           .from('meetings')
           .update({ 
             status: 'failed', 
-            error_message: `Failed to start processing: ${functionError.message}` 
+            error_message: `Processing failed: ${errorMessage}` 
           })
           .eq('id', meetingId);
-        throw new Error(`Failed to start processing: ${functionError.message}`);
+        throw new Error(`Processing failed: ${errorMessage}`);
       }
       
       console.log('[MeetingContext] Processing triggered successfully:', data);
@@ -237,15 +255,30 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
       
       if (error) {
         console.error('[MeetingContext] Error retrying processing:', error);
+        
+        // Try to get more details from the error response
+        let errorMessage = error.message || 'Edge Function failed';
+        
+        if (error.name === 'FunctionsHttpError' && data) {
+          try {
+            const errorData = typeof data === 'string' ? JSON.parse(data) : data;
+            if (errorData?.error) {
+              errorMessage = errorData.error;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+        
         // Update meeting status to failed
         await supabase
           .from('meetings')
           .update({ 
             status: 'failed', 
-            error_message: `Failed to retry processing: ${error.message}` 
+            error_message: `Retry failed: ${errorMessage}` 
           })
           .eq('id', meetingId);
-        throw new Error(`Failed to retry processing: ${error.message}`);
+        throw new Error(`Retry failed: ${errorMessage}`);
       }
       
       console.log('[MeetingContext] Retry triggered successfully:', data);
