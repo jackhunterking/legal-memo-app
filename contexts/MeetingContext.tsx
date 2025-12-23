@@ -77,37 +77,6 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
-  const confirmConsentMutation = useMutation({
-    mutationFn: async ({ 
-      meetingId, 
-      informedParticipants, 
-      recordingLawful 
-    }: { 
-      meetingId: string; 
-      informedParticipants: boolean; 
-      recordingLawful: boolean; 
-    }) => {
-      if (!user?.id) throw new Error('Not authenticated');
-      console.log('[MeetingContext] Confirming consent for meeting:', meetingId);
-      
-      const { error } = await supabase
-        .from('meeting_consent_logs')
-        .insert({
-          meeting_id: meetingId,
-          user_id: user.id,
-          informed_participants: informedParticipants,
-          recording_lawful: recordingLawful,
-          consented_at: new Date().toISOString(),
-        });
-      
-      if (error) {
-        console.error('[MeetingContext] Error confirming consent:', error.message || JSON.stringify(error));
-        throw new Error(error.message || 'Failed to confirm consent');
-      }
-      console.log('[MeetingContext] Consent confirmed');
-    },
-  });
-
   const finalizeUploadMutation = useMutation({
     mutationFn: async ({
       meetingId,
@@ -375,7 +344,6 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     setActiveMeetingId,
     
     createInstantMeeting: createInstantMeetingMutation.mutateAsync,
-    confirmConsent: confirmConsentMutation.mutateAsync,
     finalizeUpload: finalizeUploadMutation.mutateAsync,
     triggerProcessing: triggerProcessingMutation.mutateAsync,
     updateMeeting: updateMeetingMutation.mutateAsync,

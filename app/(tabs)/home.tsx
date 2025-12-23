@@ -62,7 +62,7 @@ export default function HomeScreen() {
 
     try {
       const meeting = await createInstantMeeting();
-      router.push({ pathname: "/consent", params: { meetingId: meeting.id } });
+      router.push({ pathname: "/recording", params: { meetingId: meeting.id } });
     } catch (err: any) {
       const errorMessage = err?.message || JSON.stringify(err);
       console.error("[Home] Failed to create meeting:", errorMessage);
