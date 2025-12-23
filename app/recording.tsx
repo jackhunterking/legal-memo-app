@@ -17,6 +17,7 @@ import {
   RecordingPresets,
   useAudioRecorderState,
   setAudioModeAsync,
+  AudioModule,
 } from "expo-audio";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -46,16 +47,35 @@ export default function RecordingScreen() {
     hasStartedRecording.current = true;
 
     try {
+      // CRITICAL: Request recording permissions explicitly
+      console.log("[Recording] Requesting recording permissions...");
+      const permissionStatus = await AudioModule.requestRecordingPermissionsAsync();
+      console.log("[Recording] Permission status:", permissionStatus);
+      
+      if (!permissionStatus.granted) {
+        throw new Error("Microphone permission was denied. Please grant microphone access in your device settings.");
+      }
+
       console.log("[Recording] Setting audio mode...");
       await setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: true,
       });
       
-      console.log("[Recording] Starting recording...");
+      console.log("[Recording] Preparing to record...");
       await audioRecorder.prepareToRecordAsync();
-      const recordingStarted = await audioRecorder.record();
-      console.log("[Recording] Record() returned:", recordingStarted);
+      
+      console.log("[Recording] Starting recording...");
+      audioRecorder.record();
+      
+      // Verify recording actually started
+      const status = audioRecorder.getStatus();
+      console.log("[Recording] Recorder status after start:", status);
+      
+      if (!status.isRecording && !status.canRecord) {
+        throw new Error("Failed to start recording. The recorder is not in a valid state.");
+      }
+      
       setRecordedAt(new Date().toISOString());
       console.log("[Recording] Recording started successfully");
     } catch (err) {
@@ -64,7 +84,7 @@ export default function RecordingScreen() {
       if (Platform.OS !== "web") {
         Alert.alert(
           "Recording Error", 
-          `Failed to start recording: ${errorMessage}\n\nPlease ensure microphone permissions are granted.`
+          `Failed to start recording: ${errorMessage}`
         );
       }
       router.back();
@@ -160,10 +180,19 @@ export default function RecordingScreen() {
     setIsUploading(true);
 
     try {
+      // Check recorder status before stopping
+      const statusBeforeStop = audioRecorder.getStatus();
+      console.log("[Recording] Status before stop:", JSON.stringify(statusBeforeStop));
+      console.log("[Recording] isRecording:", statusBeforeStop.isRecording);
+      console.log("[Recording] canRecord:", statusBeforeStop.canRecord);
+      console.log("[Recording] Duration:", statusBeforeStop.durationMillis, "ms");
+      
       console.log("[Recording] Stopping recording...");
       await audioRecorder.stop();
+      
       const uri = audioRecorder.uri;
       console.log("[Recording] Stopped, URI:", uri);
+      console.log("[Recording] URI type:", typeof uri);
 
       if (!uri) {
         throw new Error("No recording URI");
