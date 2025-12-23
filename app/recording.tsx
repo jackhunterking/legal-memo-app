@@ -17,6 +17,7 @@ import {
   useAudioRecorder,
   RecordingPresets,
   useAudioRecorderState,
+  getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from "expo-audio";
@@ -59,7 +60,7 @@ export default function RecordingScreen() {
     }
   }, [audioRecorder]);
 
-  const requestPermission = useCallback(async () => {
+  const checkAndRequestPermission = useCallback(async () => {
     if (isRequestingPermission) return false;
     
     setIsRequestingPermission(true);
@@ -69,15 +70,36 @@ export default function RecordingScreen() {
       clearTimeout(permissionTimeoutRef.current);
     }
     
-    // Set a timeout in case permission request hangs
-    permissionTimeoutRef.current = setTimeout(() => {
-      console.log("[Recording] Permission request timed out");
-      setIsRequestingPermission(false);
-      setHasPermission(false);
-      setPermissionDenied(true);
-    }, 10000);
-    
     try {
+      // First check current permission status
+      console.log("[Recording] Checking current permission status...");
+      const currentStatus = await getRecordingPermissionsAsync();
+      console.log("[Recording] Current status - granted:", currentStatus.granted, "status:", currentStatus.status);
+      
+      if (currentStatus.granted) {
+        // Permission already granted, no need to request
+        console.log("[Recording] Permission already granted, proceeding...");
+        setIsRequestingPermission(false);
+        setHasPermission(true);
+        setPermissionDenied(false);
+        
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          allowsRecording: true,
+        });
+        
+        return true;
+      }
+      
+      // Permission not granted, need to request
+      // Set a timeout in case permission request hangs
+      permissionTimeoutRef.current = setTimeout(() => {
+        console.log("[Recording] Permission request timed out");
+        setIsRequestingPermission(false);
+        setHasPermission(false);
+        setPermissionDenied(true);
+      }, 10000);
+      
       console.log("[Recording] Requesting microphone permission...");
       const result = await requestRecordingPermissionsAsync();
       
@@ -103,7 +125,7 @@ export default function RecordingScreen() {
       
       return granted;
     } catch (err) {
-      console.error("[Recording] Permission request error:", err);
+      console.error("[Recording] Permission error:", err);
       
       // Clear timeout
       if (permissionTimeoutRef.current) {
@@ -121,7 +143,7 @@ export default function RecordingScreen() {
   useEffect(() => {
     if (!hasInitiatedRef.current) {
       hasInitiatedRef.current = true;
-      requestPermission();
+      checkAndRequestPermission();
     }
     
     return () => {
@@ -129,7 +151,7 @@ export default function RecordingScreen() {
         clearTimeout(permissionTimeoutRef.current);
       }
     };
-  }, [requestPermission]);
+  }, [checkAndRequestPermission]);
 
   useEffect(() => {
     if (hasPermission && !recorderState.isRecording && !startedAt) {
@@ -325,7 +347,7 @@ export default function RecordingScreen() {
           {!isRequestingPermission && (
             <Pressable 
               style={styles.permissionButton} 
-              onPress={requestPermission}
+              onPress={checkAndRequestPermission}
             >
               <Text style={styles.permissionButtonText}>Request Permission</Text>
             </Pressable>
@@ -368,7 +390,7 @@ export default function RecordingScreen() {
           </Text>
           <Pressable 
             style={styles.permissionButton} 
-            onPress={requestPermission}
+            onPress={checkAndRequestPermission}
           >
             <Text style={styles.permissionButtonText}>Grant Permission</Text>
           </Pressable>
