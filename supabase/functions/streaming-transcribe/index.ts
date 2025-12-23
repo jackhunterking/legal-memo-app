@@ -35,7 +35,7 @@ function jsonResponse(data: unknown, status = 200) {
 
 // Helper to create error response
 function errorResponse(message: string, status = 400) {
-  console.error(`[streaming-transcribe] Error: ${message}`);
+  console.error(`[streaming-transcribe] Error (${status}): ${message}`);
   return jsonResponse({ error: message }, status);
 }
 
@@ -290,9 +290,68 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  console.log("[streaming-transcribe] Request received");
+  console.log("[streaming-transcribe] === Request received ===");
 
   try {
+    // Get environment variables
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const assemblyAIKey = Deno.env.get("ASSEMBLYAI_API_KEY");
+    const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
+
+    console.log("[streaming-transcribe] Env check - URL:", !!supabaseUrl, "ANON:", !!supabaseAnonKey, "SERVICE:", !!supabaseServiceKey, "ASSEMBLY:", !!assemblyAIKey);
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return errorResponse("Server configuration error: Missing Supabase URL or Anon Key", 500);
+    }
+
+    if (!assemblyAIKey) {
+      return errorResponse("Server configuration error: ASSEMBLYAI_API_KEY not configured", 500);
+    }
+
+    // Get the auth header
+    const authHeader = req.headers.get("Authorization");
+    console.log("[streaming-transcribe] Auth header present:", !!authHeader);
+    
+    if (!authHeader) {
+      return errorResponse("Missing Authorization header", 401);
+    }
+
+    // Create a Supabase client with the user's auth header to validate the token
+    // This is the correct way to validate JWT tokens in Edge Functions
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: { Authorization: authHeader },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    // Validate the user's token by getting the user
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+    
+    console.log("[streaming-transcribe] Auth result - user:", !!user, "error:", userError?.message || "none");
+
+    if (userError) {
+      console.error("[streaming-transcribe] Auth validation error:", userError);
+      return errorResponse(`Authentication failed: ${userError.message}`, 401);
+    }
+
+    if (!user) {
+      return errorResponse("Invalid or expired token - no user found", 401);
+    }
+
+    const userId = user.id;
+    console.log("[streaming-transcribe] User authenticated:", userId);
+
+    // Create an admin client for database operations (bypasses RLS)
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
     // Parse request body
     let body: Record<string, unknown>;
     try {
@@ -306,51 +365,7 @@ Deno.serve(async (req: Request) => {
       return errorResponse("Missing 'action' field. Valid: start-session, process-chunk, end-session", 400);
     }
 
-    console.log(`[streaming-transcribe] Action: ${action}`);
-
-    // Get environment variables
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const assemblyAIKey = Deno.env.get("ASSEMBLYAI_API_KEY");
-    const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return errorResponse("Server configuration error: Missing Supabase credentials", 500);
-    }
-
-    if (!assemblyAIKey) {
-      return errorResponse("Server configuration error: ASSEMBLYAI_API_KEY not configured", 500);
-    }
-
-    // Verify authentication - get the auth header
-    const authHeader = req.headers.get("Authorization");
-    console.log(`[streaming-transcribe] Auth header present: ${!!authHeader}`);
-
-    // Create Supabase admin client (bypasses RLS)
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-
-    // Verify the user's JWT token
-    let userId: string | null = null;
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.replace("Bearer ", "");
-      const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-      
-      if (authError) {
-        console.error("[streaming-transcribe] Auth error:", authError.message);
-        return errorResponse(`Authentication failed: ${authError.message}`, 401);
-      }
-      
-      if (!user) {
-        return errorResponse("Invalid or expired token", 401);
-      }
-      
-      userId = user.id;
-      console.log(`[streaming-transcribe] User authenticated: ${userId}`);
-    } else {
-      return errorResponse("Missing or invalid Authorization header", 401);
-    }
+    console.log("[streaming-transcribe] Action:", action);
 
     // Handle actions
     switch (action) {
@@ -360,6 +375,8 @@ Deno.serve(async (req: Request) => {
           return errorResponse("Missing meeting_id", 400);
         }
 
+        console.log("[streaming-transcribe] Looking up meeting:", meetingId);
+
         // Verify the meeting belongs to the user
         const { data: meeting, error: meetingError } = await supabaseAdmin
           .from("meetings")
@@ -367,10 +384,16 @@ Deno.serve(async (req: Request) => {
           .eq("id", meetingId)
           .single();
 
-        if (meetingError || !meeting) {
+        if (meetingError) {
           console.error("[streaming-transcribe] Meeting lookup error:", meetingError);
+          return errorResponse(`Meeting lookup failed: ${meetingError.message}`, 404);
+        }
+
+        if (!meeting) {
           return errorResponse("Meeting not found", 404);
         }
+
+        console.log("[streaming-transcribe] Meeting found, owner:", meeting.user_id, "requester:", userId);
 
         if (meeting.user_id !== userId) {
           return errorResponse("You don't have permission to access this meeting", 403);
@@ -380,23 +403,23 @@ Deno.serve(async (req: Request) => {
         const sessionId = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
 
-        // Try to insert session record (non-blocking)
-        const { error: insertError } = await supabaseAdmin
-          .from("streaming_sessions")
-          .insert({
-            id: sessionId,
-            meeting_id: meetingId,
-            assemblyai_session_id: sessionId,
-            expires_at: expiresAt,
-            status: "active",
-          });
-
-        if (insertError) {
-          console.warn("[streaming-transcribe] Session record insert warning:", insertError.message);
-          // Don't fail - session record is optional for functionality
+        // Try to insert session record (non-blocking, won't fail the request)
+        try {
+          await supabaseAdmin
+            .from("streaming_sessions")
+            .insert({
+              id: sessionId,
+              meeting_id: meetingId,
+              assemblyai_session_id: sessionId,
+              expires_at: expiresAt,
+              status: "active",
+            });
+          console.log("[streaming-transcribe] Session record created");
+        } catch (insertErr) {
+          console.warn("[streaming-transcribe] Session record insert warning:", insertErr);
         }
 
-        console.log(`[streaming-transcribe] Session started: ${sessionId}`);
+        console.log("[streaming-transcribe] Session started:", sessionId);
         
         return jsonResponse({
           session_id: sessionId,
