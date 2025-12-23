@@ -154,20 +154,28 @@ export function useChunkedRecording(
 
   /**
    * Start streaming session with Edge Function
+   * Calls streaming-transcribe with action: "start-session"
    */
   const startStreamingSession = useCallback(async (meetingId: string): Promise<string> => {
     console.log("[useChunkedRecording] Starting streaming session...");
     
     const { data, error: fnError } = await supabase.functions.invoke(
-      "streaming-transcribe/start-session",
-      { body: { meeting_id: meetingId } }
+      "streaming-transcribe",
+      { 
+        body: { 
+          action: "start-session",
+          meeting_id: meetingId 
+        } 
+      }
     );
 
     if (fnError) {
+      console.error("[useChunkedRecording] Function error details:", fnError);
       throw new Error(`Failed to start session: ${fnError.message}`);
     }
 
     if (!data?.session_id) {
+      console.error("[useChunkedRecording] Response data:", data);
       throw new Error("No session_id returned from Edge Function");
     }
 
@@ -177,6 +185,7 @@ export function useChunkedRecording(
 
   /**
    * Process a single audio chunk
+   * Calls streaming-transcribe with action: "process-chunk"
    */
   const processChunk = useCallback(async (
     meetingId: string,
@@ -186,9 +195,10 @@ export function useChunkedRecording(
     console.log(`[useChunkedRecording] Processing chunk ${index}...`);
     
     const { data, error: fnError } = await supabase.functions.invoke(
-      "streaming-transcribe/process-chunk",
+      "streaming-transcribe",
       {
         body: {
+          action: "process-chunk",
           meeting_id: meetingId,
           audio_base64: audioBase64,
           chunk_index: index,
@@ -220,13 +230,18 @@ export function useChunkedRecording(
 
   /**
    * End streaming session
+   * Calls streaming-transcribe with action: "end-session"
    */
   const endStreamingSession = useCallback(async (meetingId: string, sessId: string): Promise<void> => {
     console.log("[useChunkedRecording] Ending streaming session...");
     
     try {
-      await supabase.functions.invoke("streaming-transcribe/end-session", {
-        body: { meeting_id: meetingId, session_id: sessId },
+      await supabase.functions.invoke("streaming-transcribe", {
+        body: { 
+          action: "end-session",
+          meeting_id: meetingId, 
+          session_id: sessId 
+        },
       });
       console.log("[useChunkedRecording] Session ended");
     } catch (err) {

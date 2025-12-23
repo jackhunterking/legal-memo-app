@@ -4,10 +4,10 @@
  * Handles real-time streaming transcription with AssemblyAI.
  * Manages WebSocket connections and audio format conversion.
  * 
- * Endpoints:
- * - POST /start-session: Initialize AssemblyAI streaming session
- * - POST /process-chunk: Send audio chunk and receive transcripts
- * - POST /end-session: Terminate streaming session
+ * Actions (passed in request body):
+ * - start-session: Initialize streaming session for a meeting
+ * - process-chunk: Send audio chunk and receive transcripts
+ * - end-session: Terminate streaming session
  * 
  * AssemblyAI Streaming API v3 Requirements:
  * - WebSocket: wss://streaming.assemblyai.com/v3/ws?sample_rate=16000
@@ -66,22 +66,37 @@ type AssemblyAIMessage =
   | AssemblyAISessionTerminated 
   | AssemblyAIError;
 
-// Request/Response types
-interface StartSessionRequest {
+// Request types with action field
+interface BaseRequest {
+  action: "start-session" | "process-chunk" | "end-session";
+}
+
+interface StartSessionRequest extends BaseRequest {
+  action: "start-session";
   meeting_id: string;
 }
 
+interface ProcessChunkRequest extends BaseRequest {
+  action: "process-chunk";
+  meeting_id: string;
+  audio_base64: string;
+  chunk_index: number;
+  format?: string; // 'm4a', 'wav', etc.
+}
+
+interface EndSessionRequest extends BaseRequest {
+  action: "end-session";
+  meeting_id: string;
+  session_id?: string;
+}
+
+type RequestBody = StartSessionRequest | ProcessChunkRequest | EndSessionRequest;
+
+// Response types
 interface StartSessionResponse {
   session_id: string;
   expires_at: string;
   meeting_id: string;
-}
-
-interface ProcessChunkRequest {
-  meeting_id: string;
-  audio_base64: string;
-  chunk_index: number;
-  format: string; // 'm4a', 'wav', etc.
 }
 
 interface ProcessChunkResponse {
@@ -94,11 +109,6 @@ interface ProcessChunkResponse {
     confidence: number;
   }>;
   chunk_index: number;
-}
-
-interface EndSessionRequest {
-  meeting_id: string;
-  session_id: string;
 }
 
 /**
@@ -369,10 +379,28 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const url = new URL(req.url);
-  const path = url.pathname.split("/").pop();
-
   try {
+    // Parse request body first to get the action
+    let body: RequestBody;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON in request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate action is present
+    if (!body.action) {
+      return new Response(
+        JSON.stringify({ error: "Missing 'action' in request body. Valid actions: start-session, process-chunk, end-session" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[streaming-transcribe] Action: ${body.action}`);
+
     // Verify authentication
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -404,15 +432,18 @@ Deno.serve(async (req: Request) => {
     const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
 
     if (!assemblyAIKey) {
-      throw new Error("ASSEMBLYAI_API_KEY not configured");
+      return new Response(
+        JSON.stringify({ error: "ASSEMBLYAI_API_KEY not configured on server" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // Route to appropriate handler
-    switch (path) {
+    // Route to appropriate handler based on action
+    switch (body.action) {
       case "start-session": {
-        const body: StartSessionRequest = await req.json();
+        const { meeting_id } = body as StartSessionRequest;
         
-        if (!body.meeting_id) {
+        if (!meeting_id) {
           return new Response(
             JSON.stringify({ error: "Missing meeting_id" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -427,23 +458,24 @@ Deno.serve(async (req: Request) => {
           .from("streaming_sessions")
           .insert({
             id: sessionId,
-            meeting_id: body.meeting_id,
-            assemblyai_session_id: sessionId, // Will be updated when actual session starts
+            meeting_id: meeting_id,
+            assemblyai_session_id: sessionId,
             expires_at: expiresAt,
             status: "active",
           });
 
         if (insertError) {
           console.error("[streaming-transcribe] Error creating session:", insertError);
+          // Don't fail - session record is optional
         }
 
         const response: StartSessionResponse = {
           session_id: sessionId,
           expires_at: expiresAt,
-          meeting_id: body.meeting_id,
+          meeting_id: meeting_id,
         };
 
-        console.log(`[streaming-transcribe] Session started for meeting: ${body.meeting_id}`);
+        console.log(`[streaming-transcribe] Session started for meeting: ${meeting_id}`);
         
         return new Response(
           JSON.stringify(response),
@@ -452,23 +484,23 @@ Deno.serve(async (req: Request) => {
       }
 
       case "process-chunk": {
-        const body: ProcessChunkRequest = await req.json();
+        const { meeting_id, audio_base64, chunk_index, format } = body as ProcessChunkRequest;
 
-        if (!body.meeting_id || !body.audio_base64) {
+        if (!meeting_id || !audio_base64) {
           return new Response(
             JSON.stringify({ error: "Missing meeting_id or audio_base64" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        console.log(`[streaming-transcribe] Processing chunk ${body.chunk_index} for meeting ${body.meeting_id}`);
+        console.log(`[streaming-transcribe] Processing chunk ${chunk_index} for meeting ${meeting_id}`);
 
         // Convert audio to PCM16 if needed
-        let pcmBase64 = body.audio_base64;
-        const inputFormat = body.format || "m4a";
+        let pcmBase64 = audio_base64;
+        const inputFormat = format || "m4a";
 
         if (inputFormat !== "pcm" && inputFormat !== "wav" && cloudConvertApiKey) {
-          pcmBase64 = await convertAudioToPCM16(body.audio_base64, inputFormat, cloudConvertApiKey);
+          pcmBase64 = await convertAudioToPCM16(audio_base64, inputFormat, cloudConvertApiKey);
         }
 
         // Process through AssemblyAI
@@ -500,7 +532,7 @@ Deno.serve(async (req: Request) => {
           const { error: segmentError } = await supabase
             .from("transcript_segments")
             .insert({
-              meeting_id: body.meeting_id,
+              meeting_id: meeting_id,
               speaker: segment.speaker,
               text: segment.text,
               start_ms: segment.start_ms,
@@ -514,23 +546,24 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        // Update session chunk count
-        await supabase
+        // Update session chunk count (non-blocking)
+        supabase
           .from("streaming_sessions")
           .update({ 
-            chunks_processed: body.chunk_index + 1,
+            chunks_processed: chunk_index + 1,
             last_activity_at: new Date().toISOString(),
           })
-          .eq("meeting_id", body.meeting_id)
-          .eq("status", "active");
+          .eq("meeting_id", meeting_id)
+          .eq("status", "active")
+          .then(() => {});
 
         const response: ProcessChunkResponse = {
           partial_text: partial,
           final_segments: finalSegments,
-          chunk_index: body.chunk_index,
+          chunk_index: chunk_index,
         };
 
-        console.log(`[streaming-transcribe] Chunk ${body.chunk_index} processed, ${finalSegments.length} segments`);
+        console.log(`[streaming-transcribe] Chunk ${chunk_index} processed, ${finalSegments.length} segments`);
 
         return new Response(
           JSON.stringify(response),
@@ -539,9 +572,9 @@ Deno.serve(async (req: Request) => {
       }
 
       case "end-session": {
-        const body: EndSessionRequest = await req.json();
+        const { meeting_id } = body as EndSessionRequest;
 
-        if (!body.meeting_id) {
+        if (!meeting_id) {
           return new Response(
             JSON.stringify({ error: "Missing meeting_id" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -555,7 +588,7 @@ Deno.serve(async (req: Request) => {
             status: "completed",
             ended_at: new Date().toISOString(),
           })
-          .eq("meeting_id", body.meeting_id)
+          .eq("meeting_id", meeting_id)
           .eq("status", "active");
 
         if (updateError) {
@@ -566,20 +599,20 @@ Deno.serve(async (req: Request) => {
         await supabase
           .from("meetings")
           .update({ used_streaming_transcription: true })
-          .eq("id", body.meeting_id);
+          .eq("id", meeting_id);
 
-        console.log(`[streaming-transcribe] Session ended for meeting: ${body.meeting_id}`);
+        console.log(`[streaming-transcribe] Session ended for meeting: ${meeting_id}`);
 
         return new Response(
-          JSON.stringify({ success: true, meeting_id: body.meeting_id }),
+          JSON.stringify({ success: true, meeting_id: meeting_id }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       default:
         return new Response(
-          JSON.stringify({ error: `Unknown endpoint: ${path}` }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: `Unknown action: ${(body as any).action}. Valid actions: start-session, process-chunk, end-session` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
   } catch (error) {
@@ -592,4 +625,3 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
-
