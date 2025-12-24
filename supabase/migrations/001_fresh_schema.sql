@@ -1,4 +1,4 @@
--- Fresh Schema for Legal Meeting Assistant
+-- Fresh Schema for Legal Memo
 -- This is a complete rebuild with simplified tables
 -- Run this on a fresh Supabase project or after dropping all existing tables
 

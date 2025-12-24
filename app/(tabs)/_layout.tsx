@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Mic, FolderOpen, Settings } from "lucide-react-native";
+import { Mic, FolderOpen, Settings, Users } from "lucide-react-native";
 import { Platform } from "react-native";
 import Colors from "@/constants/colors";
 
@@ -35,6 +35,13 @@ export default function TabsLayout() {
         options={{
           title: "Meetings",
           tabBarIcon: ({ color, size }) => <FolderOpen size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="contacts"
+        options={{
+          title: "Contacts",
+          tabBarIcon: ({ color, size }) => <Users size={size} color={color} />,
         }}
       />
       <Tabs.Screen

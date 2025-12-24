@@ -1,18 +1,14 @@
 /**
  * Recording Screen
  * 
- * Main recording interface with real-time streaming transcription.
- * Integrates chunked audio recording with live transcript display.
+ * Clean, user-focused recording interface with real-time live transcription.
+ * Displays transcription like a teleprompter - words appear as you speak.
  * 
- * Uses:
- * - useChunkedRecording: Manages audio recording in chunks
- * - useStreamingTranscription: Manages transcript state
- * - LiveTranscript: Displays real-time transcription
- * 
- * Per Expo Audio docs:
- * - Requests permissions via AudioModule.requestRecordingPermissionsAsync()
- * - Configures audio mode via setAudioModeAsync()
- * - Uses useAudioRecorder for recording
+ * Features:
+ * - Continuous recording (never interrupts)
+ * - Real-time transcription display
+ * - Simple controls (pause/stop)
+ * - No technical details shown to user
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -28,80 +24,43 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Pause, Play, Square, Mic, Wifi, WifiOff } from "lucide-react-native";
+import { Pause, Play, Square, Mic } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
-import { useChunkedRecording, type ChunkResult } from "@/hooks/useChunkedRecording";
-import { useStreamingTranscription } from "@/hooks/useStreamingTranscription";
+import { useLiveAudioStream } from "@/hooks/useLiveAudioStream";
 import LiveTranscript from "@/components/LiveTranscript";
-import { AUDIO_FILE_CONFIG } from "@/lib/audio-config";
 
 export default function RecordingScreen() {
   const router = useRouter();
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
-  const { uploadAudio, updateMeeting } = useMeetings();
+  const { updateMeeting } = useMeetings();
   const { user } = useAuth();
 
   // Local state
-  const [isUploading, setIsUploading] = useState(false);
   const [recordedAt, setRecordedAt] = useState<string | null>(null);
-  const [totalDurationMs, setTotalDurationMs] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Animation refs
+  // Animation ref for pulsing recording indicator
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const hasInitialized = useRef(false);
 
-  // Streaming transcription state
-  const {
-    isConnected,
-    turns,
-    currentPartial,
-    processChunkResult,
-    setConnected,
-    setError: setTranscriptError,
-    clearTranscript,
-  } = useStreamingTranscription();
-
-  // Handle chunk processed callback
-  const handleChunkProcessed = useCallback((result: ChunkResult) => {
-    processChunkResult(result);
-  }, [processChunkResult]);
-
-  // Chunked recording hook
+  // Live audio streaming with real-time transcription
   const {
     isRecording,
-    durationMillis,
-    hasPermission,
-    isInitialized,
-    sessionId,
-    chunkIndex,
-    isProcessingChunk,
-    error: recordingError,
-    totalChunksProcessed,
-    startSession,
-    stopSession,
+    isPaused,
+    durationMs,
+    isConnected,
+    isConnecting,
+    turns,
+    currentPartial,
+    error: streamError,
+    startRecording,
+    stopRecording,
     pauseRecording,
     resumeRecording,
-  } = useChunkedRecording(handleChunkProcessed);
-
-  // Update connection state when session changes
-  useEffect(() => {
-    setConnected(!!sessionId, sessionId);
-  }, [sessionId, setConnected]);
-
-  // Track total duration across pause/resume
-  useEffect(() => {
-    if (isRecording && !isPaused) {
-      const interval = setInterval(() => {
-        setTotalDurationMs((prev) => prev + 100);
-      }, 100);
-      return () => clearInterval(interval);
-    }
-  }, [isRecording, isPaused]);
+  } = useLiveAudioStream();
 
   // Initialize recording on mount
   useEffect(() => {
@@ -116,12 +75,11 @@ export default function RecordingScreen() {
         if (!user?.id) {
           throw new Error("Please log in to start recording");
         }
-        console.log("[Recording] User authenticated:", user.id);
         
         setRecordedAt(new Date().toISOString());
         
-        // Start recording session
-        await startSession(meetingId);
+        // Start live streaming recording
+        await startRecording(meetingId);
         
         console.log("[Recording] Recording started successfully");
       } catch (err) {
@@ -142,11 +100,11 @@ export default function RecordingScreen() {
     };
 
     initializeRecording();
-  }, [meetingId, user, startSession, router]);
+  }, [meetingId, user, startRecording, router]);
 
-  // Pulse animation
+  // Pulse animation for recording indicator
   useEffect(() => {
-    if (isRecording && !isPaused && !isUploading) {
+    if (isRecording && !isPaused && !isSaving) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -164,12 +122,12 @@ export default function RecordingScreen() {
       pulse.start();
       return () => pulse.stop();
     }
-  }, [isRecording, isPaused, isUploading, pulseAnim]);
+  }, [isRecording, isPaused, isSaving, pulseAnim]);
 
   // Handle back button - show confirmation
   useEffect(() => {
     const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (isRecording || sessionId) {
+      if (isRecording) {
         handleStop();
         return true;
       }
@@ -177,7 +135,7 @@ export default function RecordingScreen() {
     });
 
     return () => backHandler.remove();
-  }, [isRecording, sessionId]);
+  }, [isRecording]);
 
   // Handle pause/resume
   const handlePauseResume = async () => {
@@ -185,16 +143,10 @@ export default function RecordingScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    try {
-      if (isPaused) {
-        resumeRecording();
-        setIsPaused(false);
-      } else {
-        pauseRecording();
-        setIsPaused(true);
-      }
-    } catch (err) {
-      console.error("[Recording] Pause/Resume error:", err);
+    if (isPaused) {
+      resumeRecording();
+    } else {
+      pauseRecording();
     }
   };
 
@@ -213,7 +165,7 @@ export default function RecordingScreen() {
     } else {
       Alert.alert(
         "Stop Recording",
-        "Are you sure you want to stop the recording? Your transcription will be saved.",
+        "Are you sure you want to stop? Your transcription will be saved.",
         [
           { text: "Cancel", style: "cancel" },
           { text: "Stop & Save", style: "destructive", onPress: confirmStop },
@@ -222,33 +174,35 @@ export default function RecordingScreen() {
     }
   };
 
-  // Perform stop and upload
+  // Perform stop and save
   const performStop = async () => {
     if (!meetingId || !user?.id) return;
 
-    setIsUploading(true);
+    setIsSaving(true);
 
     try {
-      // Stop recording session
-      console.log("[Recording] Stopping session...");
-      await stopSession();
+      // Stop recording - this also:
+      // 1. Saves segments to database
+      // 2. Uploads audio file to storage
+      // 3. Triggers batch processing for speaker diarization
+      // 4. Updates meeting status appropriately
+      await stopRecording();
 
       // Calculate duration
-      const durationSeconds = Math.round(totalDurationMs / 1000);
+      const durationSeconds = Math.round(durationMs / 1000);
       console.log("[Recording] Duration:", durationSeconds, "seconds");
 
-      // Update meeting with recording info
+      // Update meeting with recording timestamp only
+      // Note: Don't set status here - the hook handles status based on batch processing
       await updateMeeting({
         meetingId,
         updates: {
-          duration_seconds: durationSeconds,
           recorded_at: recordedAt || new Date().toISOString(),
-          used_streaming_transcription: true,
-          status: "ready", // Mark as ready since we have streaming transcripts
         },
       });
 
       // Navigate to meeting detail
+      // User will see transcript immediately with "Speaker detection in progress" banner
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -256,7 +210,7 @@ export default function RecordingScreen() {
       router.replace(`/meeting/${meetingId}`);
     } catch (err) {
       console.error("[Recording] Stop/save error:", err);
-      setIsUploading(false);
+      setIsSaving(false);
 
       // Update meeting status to failed
       try {
@@ -293,13 +247,13 @@ export default function RecordingScreen() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Get status text
+  // Get simple status text
   const getStatusText = () => {
-    if (isUploading) return "Saving...";
+    if (isSaving) return "Saving...";
     if (isPaused) return "Paused";
-    if (isProcessingChunk) return "Processing...";
+    if (isConnecting) return "Connecting...";
     if (isRecording) return "Recording";
-    return "Initializing...";
+    return "Starting...";
   };
 
   return (
@@ -323,40 +277,24 @@ export default function RecordingScreen() {
 
         {/* Status and Timer */}
         <Text style={styles.statusText}>{getStatusText()}</Text>
-        <Text style={styles.timer}>{formatTime(totalDurationMs)}</Text>
+        <Text style={styles.timer}>{formatTime(durationMs)}</Text>
 
-        {/* Connection Status */}
-        <View style={styles.connectionStatus}>
-          {isConnected ? (
-            <>
-              <Wifi size={16} color="#10B981" />
-              <Text style={[styles.connectionText, { color: "#10B981" }]}>
-                Live Transcription Active
-              </Text>
-            </>
-          ) : (
-            <>
-              <WifiOff size={16} color={Colors.textMuted} />
-              <Text style={[styles.connectionText, { color: Colors.textMuted }]}>
-                Connecting...
-              </Text>
-            </>
-          )}
-          {totalChunksProcessed > 0 && (
-            <Text style={styles.chunkCount}>
-              {totalChunksProcessed} chunks
-            </Text>
-          )}
-        </View>
-
-        {/* Error Display */}
-        {recordingError && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>{recordingError}</Text>
+        {/* Connection indicator (subtle) */}
+        {isConnected && (
+          <View style={styles.liveIndicator}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>LIVE</Text>
           </View>
         )}
 
-        {/* Live Transcript */}
+        {/* Error Display (only if critical) */}
+        {streamError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{streamError}</Text>
+          </View>
+        )}
+
+        {/* Live Transcript - Teleprompter View */}
         <View style={styles.transcriptContainer}>
           <LiveTranscript
             turns={turns}
@@ -370,7 +308,7 @@ export default function RecordingScreen() {
           <Pressable
             style={[styles.controlButton, styles.pauseButton]}
             onPress={handlePauseResume}
-            disabled={isUploading || !isInitialized}
+            disabled={isSaving || !isRecording}
           >
             {isPaused ? (
               <Play size={28} color={Colors.text} fill={Colors.text} />
@@ -382,7 +320,7 @@ export default function RecordingScreen() {
           <Pressable
             style={[styles.controlButton, styles.stopButton]}
             onPress={handleStop}
-            disabled={isUploading}
+            disabled={isSaving}
           >
             <Square size={32} color={Colors.text} fill={Colors.text} />
           </Pressable>
@@ -447,21 +385,24 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     textAlign: "center",
   },
-  connectionStatus: {
+  liveIndicator: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 6,
     marginBottom: 16,
-    gap: 8,
   },
-  connectionText: {
-    fontSize: 13,
-    fontWeight: "500",
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#10B981",
   },
-  chunkCount: {
+  liveText: {
     fontSize: 12,
-    color: Colors.textMuted,
-    marginLeft: 8,
+    fontWeight: "700",
+    color: "#10B981",
+    letterSpacing: 1,
   },
   errorBanner: {
     backgroundColor: `${Colors.error}20`,
@@ -478,8 +419,7 @@ const styles = StyleSheet.create({
   transcriptContainer: {
     flex: 1,
     marginBottom: 20,
-    minHeight: 150,
-    maxHeight: 300,
+    minHeight: 200,
   },
   controls: {
     flexDirection: "row",

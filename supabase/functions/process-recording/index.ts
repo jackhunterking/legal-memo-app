@@ -1,5 +1,6 @@
 // Supabase Edge Function: process-recording
 // Unified pipeline: CloudConvert (audio conversion) + AssemblyAI (transcription with diarization)
+// Includes Polar usage metering for subscription billing
 
 /// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
 
@@ -14,6 +15,7 @@ const corsHeaders = {
 // API URLs
 const CLOUDCONVERT_API_URL = "https://api.cloudconvert.com/v2";
 const ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2";
+const POLAR_API_URL = "https://api.polar.sh/v1";
 
 // Types
 interface ProcessRequest {
@@ -228,9 +230,41 @@ async function convertToMp3(
 // Step 2: Transcribe with AssemblyAI
 async function transcribeAudio(
   audioUrl: string,
-  assemblyAIKey: string
+  assemblyAIKey: string,
+  expectedSpeakers: number = 2
 ): Promise<AssemblyAITranscript> {
   console.log("[ProcessRecording] Submitting to AssemblyAI for transcription...");
+  console.log(`[ProcessRecording] Expected speakers: ${expectedSpeakers}`);
+
+  // Build base request
+  const requestBody: Record<string, unknown> = {
+    audio_url: audioUrl,
+    speaker_labels: true,
+    auto_highlights: true,
+    language_code: "en",
+  };
+
+  // Configure speaker detection per AssemblyAI docs
+  // https://www.assemblyai.com/docs/pre-recorded-audio/speaker-diarization
+  if (expectedSpeakers === 1) {
+    // Solo mode: use speakers_expected for exact match
+    requestBody.speakers_expected = 1;
+    console.log("[ProcessRecording] Solo mode: speakers_expected = 1");
+  } else if (expectedSpeakers === 2) {
+    // 2 People: use speaker_options with range for flexibility
+    requestBody.speaker_options = {
+      min_speakers_expected: 2,
+      max_speakers_expected: 4,
+    };
+    console.log("[ProcessRecording] 2 People mode: speaker_options = { min: 2, max: 4 }");
+  } else {
+    // 3+ People: wider range for larger meetings
+    requestBody.speaker_options = {
+      min_speakers_expected: 3,
+      max_speakers_expected: 10,
+    };
+    console.log("[ProcessRecording] 3+ People mode: speaker_options = { min: 3, max: 10 }");
+  }
 
   // Submit transcription job
   const submitResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
@@ -239,12 +273,7 @@ async function transcribeAudio(
       Authorization: assemblyAIKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      audio_url: audioUrl,
-      speaker_labels: true,      // Enable diarization
-      auto_highlights: true,     // Key moments
-      language_code: "en",
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!submitResponse.ok) {
@@ -317,6 +346,149 @@ async function generateSummary(
   return result.response || "Summary not available.";
 }
 
+// Step 4: Record usage and send to Polar meter API
+interface UsageResult {
+  success: boolean;
+  minutes_recorded: number;
+  minutes_from_free_trial: number;
+  minutes_from_subscription: number;
+  free_trial_remaining: number;
+  polar_event_id?: string;
+  error?: string;
+}
+
+async function recordUsageAndMeter(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  meetingId: string,
+  durationSeconds: number,
+  polarAccessToken?: string
+): Promise<UsageResult> {
+  console.log("[ProcessRecording] Recording usage for meeting...");
+  
+  // Round up to nearest minute for billing
+  const durationMinutes = Math.ceil(durationSeconds / 60);
+  console.log(`[ProcessRecording] Duration: ${durationSeconds}s = ${durationMinutes} minutes (rounded up)`);
+
+  // Get user's profile to check subscription status and free trial
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("polar_customer_id, has_free_trial, free_trial_minutes_remaining")
+    .eq("id", userId)
+    .single();
+
+  if (profileError) {
+    console.error("[ProcessRecording] Error fetching profile:", profileError);
+    return {
+      success: false,
+      minutes_recorded: durationMinutes,
+      minutes_from_free_trial: 0,
+      minutes_from_subscription: 0,
+      free_trial_remaining: 0,
+      error: "Could not fetch user profile",
+    };
+  }
+
+  // Check if user has active subscription
+  const { data: subscription } = await supabase
+    .from("subscriptions")
+    .select("status, polar_customer_id")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .single();
+
+  const hasActiveSubscription = !!subscription;
+  const polarCustomerId = subscription?.polar_customer_id || profile?.polar_customer_id;
+  const freeTrialRemaining = profile?.free_trial_minutes_remaining || 0;
+  const hasFreeTrialMinutes = freeTrialRemaining > 0;
+
+  // Determine how to allocate minutes
+  let minutesFromFreeTrial = 0;
+  let minutesFromSubscription = 0;
+
+  if (hasFreeTrialMinutes && !hasActiveSubscription) {
+    // Use free trial minutes first if no subscription
+    minutesFromFreeTrial = Math.min(durationMinutes, freeTrialRemaining);
+    minutesFromSubscription = durationMinutes - minutesFromFreeTrial;
+  } else if (hasActiveSubscription) {
+    // All minutes go to subscription metering
+    minutesFromSubscription = durationMinutes;
+  } else if (hasFreeTrialMinutes) {
+    // Only free trial available
+    minutesFromFreeTrial = Math.min(durationMinutes, freeTrialRemaining);
+    minutesFromSubscription = 0;
+  }
+
+  console.log(`[ProcessRecording] Usage allocation: free_trial=${minutesFromFreeTrial}, subscription=${minutesFromSubscription}`);
+
+  // Send usage event to Polar if user has subscription and minutes to charge
+  let polarEventId: string | undefined;
+  
+  if (minutesFromSubscription > 0 && polarCustomerId && polarAccessToken) {
+    try {
+      console.log("[ProcessRecording] Sending usage event to Polar...");
+      
+      const polarResponse = await fetch(`${POLAR_API_URL}/meters/events`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${polarAccessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "audio_minutes_processed",
+          customer_id: polarCustomerId,
+          properties: {
+            minutes: minutesFromSubscription,
+            meeting_id: meetingId,
+          },
+        }),
+      });
+
+      if (polarResponse.ok) {
+        const polarResult = await polarResponse.json() as { id?: string };
+        polarEventId = polarResult.id;
+        console.log(`[ProcessRecording] Polar usage event recorded: ${polarEventId}`);
+      } else {
+        const errorText = await polarResponse.text();
+        console.error("[ProcessRecording] Polar meter API error:", errorText);
+      }
+    } catch (polarError) {
+      console.error("[ProcessRecording] Error sending to Polar:", polarError);
+      // Don't fail the whole process if Polar metering fails
+    }
+  } else {
+    console.log("[ProcessRecording] Skipping Polar meter (no subscription or no minutes to charge)");
+  }
+
+  // Record usage in our database using the stored procedure
+  try {
+    const { data: usageResult, error: usageError } = await supabase.rpc("record_usage", {
+      p_user_id: userId,
+      p_meeting_id: meetingId,
+      p_minutes: durationMinutes,
+      p_is_free_trial: minutesFromFreeTrial > 0,
+      p_polar_event_id: polarEventId || null,
+    });
+
+    if (usageError) {
+      console.error("[ProcessRecording] Error recording usage:", usageError);
+    } else {
+      console.log("[ProcessRecording] Usage recorded in database:", usageResult);
+    }
+  } catch (rpcError) {
+    console.error("[ProcessRecording] RPC error:", rpcError);
+  }
+
+  return {
+    success: true,
+    minutes_recorded: durationMinutes,
+    minutes_from_free_trial: minutesFromFreeTrial,
+    minutes_from_subscription: minutesFromSubscription,
+    free_trial_remaining: Math.max(0, freeTrialRemaining - minutesFromFreeTrial),
+    polar_event_id: polarEventId,
+  };
+}
+
 // Main handler
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight
@@ -345,12 +517,18 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
     const assemblyAIKey = Deno.env.get("ASSEMBLYAI_API_KEY");
+    const polarAccessToken = Deno.env.get("POLAR_ACCESS_TOKEN");
 
     if (!cloudConvertApiKey) {
       throw new Error("CLOUDCONVERT_API_KEY not configured");
     }
     if (!assemblyAIKey) {
       throw new Error("ASSEMBLYAI_API_KEY not configured");
+    }
+    
+    // Note: POLAR_ACCESS_TOKEN is optional - usage won't be metered if not set
+    if (!polarAccessToken) {
+      console.warn("[ProcessRecording] POLAR_ACCESS_TOKEN not configured - usage metering disabled");
     }
 
     // Initialize Supabase client
@@ -435,8 +613,12 @@ Deno.serve(async (req: Request) => {
       throw new Error(`Failed to get signed URL: ${signedUrlError?.message}`);
     }
 
-    // Transcribe
-    const transcript = await transcribeAudio(signedUrlData.signedUrl, assemblyAIKey);
+    // Transcribe with speaker configuration
+    const transcript = await transcribeAudio(
+      signedUrlData.signedUrl,
+      assemblyAIKey,
+      meeting.expected_speakers || 2
+    );
 
     // ============================================
     // STEP 4: Generate summary
@@ -468,14 +650,21 @@ Deno.serve(async (req: Request) => {
 
     // Save transcript segments (utterances with speaker info)
     if (transcript.utterances && transcript.utterances.length > 0) {
-      const segments = transcript.utterances.map((utterance) => ({
-        meeting_id: meetingId,
-        speaker: utterance.speaker,
-        text: utterance.text,
-        start_ms: utterance.start,
-        end_ms: utterance.end,
-        confidence: utterance.confidence,
-      }));
+      const segments = transcript.utterances.map((utterance) => {
+        // Format speaker label: "A" -> "Speaker A", "B" -> "Speaker B", etc.
+        const speakerLabel = utterance.speaker.toLowerCase().startsWith('speaker') 
+          ? utterance.speaker 
+          : `Speaker ${utterance.speaker}`;
+        
+        return {
+          meeting_id: meetingId,
+          speaker: speakerLabel,
+          text: utterance.text,
+          start_ms: utterance.start,
+          end_ms: utterance.end,
+          confidence: utterance.confidence,
+        };
+      });
 
       const { error: segmentsError } = await supabase
         .from("transcript_segments")
@@ -489,7 +678,24 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================
-    // STEP 6: Update status to ready
+    // STEP 6: Record usage and send to Polar
+    // ============================================
+    let usageResult: UsageResult | null = null;
+    if (meeting.duration_seconds > 0) {
+      usageResult = await recordUsageAndMeter(
+        supabase,
+        meeting.user_id,
+        meetingId,
+        meeting.duration_seconds,
+        polarAccessToken
+      );
+      console.log("[ProcessRecording] Usage result:", usageResult);
+    } else {
+      console.log("[ProcessRecording] Skipping usage recording (duration is 0)");
+    }
+
+    // ============================================
+    // STEP 7: Update status to ready
     // ============================================
     await updateJobStatus(supabase, meetingId, "completed", null);
     await updateMeetingStatus(supabase, meetingId, "ready");
@@ -507,6 +713,13 @@ Deno.serve(async (req: Request) => {
           segments: transcript.utterances?.length || 0,
           text_length: transcript.text?.length || 0,
         },
+        usage: usageResult ? {
+          minutes_recorded: usageResult.minutes_recorded,
+          minutes_from_free_trial: usageResult.minutes_from_free_trial,
+          minutes_from_subscription: usageResult.minutes_from_subscription,
+          free_trial_remaining: usageResult.free_trial_remaining,
+          polar_event_id: usageResult.polar_event_id,
+        } : null,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

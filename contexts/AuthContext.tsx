@@ -1,34 +1,83 @@
 import createContextHook from '@nkzw/create-context-hook';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { supabase, initSupabaseAuthForFunctions, getFunctionsAuthStatus } from '@/lib/supabase';
 import type { Profile } from '@/types';
 import type { Session, User } from '@supabase/supabase-js';
+
+const LOG_PREFIX = '[AuthContext]';
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [functionsAuthReady, setFunctionsAuthReady] = useState(false);
   const queryClient = useQueryClient();
+  const initStartedRef = useRef(false);
 
   useEffect(() => {
-    console.log('[AuthContext] Initializing auth state...');
+    // Prevent double initialization in StrictMode
+    if (initStartedRef.current) {
+      console.log(`${LOG_PREFIX} Init already started, skipping...`);
+      return;
+    }
+    initStartedRef.current = true;
     
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log('[AuthContext] Got session:', session?.user?.email);
+    console.log(`${LOG_PREFIX} ========================================`);
+    console.log(`${LOG_PREFIX} INITIALIZING AUTH CONTEXT`);
+    console.log(`${LOG_PREFIX} Timestamp: ${new Date().toISOString()}`);
+    console.log(`${LOG_PREFIX} ========================================`);
+    
+    // Initialize functions auth once at startup
+    // This sets up the token and keeps it updated on auth state changes
+    console.log(`${LOG_PREFIX} Starting initSupabaseAuthForFunctions...`);
+    const functionsAuthPromise = initSupabaseAuthForFunctions()
+      .then(() => {
+        console.log(`${LOG_PREFIX} initSupabaseAuthForFunctions COMPLETED`);
+        console.log(`${LOG_PREFIX} Functions auth status:`, JSON.stringify(getFunctionsAuthStatus()));
+        setFunctionsAuthReady(true);
+      })
+      .catch((err) => {
+        console.error(`${LOG_PREFIX} initSupabaseAuthForFunctions FAILED:`, err);
+        console.error(`${LOG_PREFIX} Error type:`, err?.constructor?.name);
+        console.error(`${LOG_PREFIX} Error message:`, err instanceof Error ? err.message : String(err));
+      });
+    
+    console.log(`${LOG_PREFIX} Getting current session...`);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error(`${LOG_PREFIX} getSession error:`, error);
+      }
+      console.log(`${LOG_PREFIX} Got session:`, {
+        hasSession: !!session,
+        email: session?.user?.email,
+        userId: session?.user?.id,
+        tokenLength: session?.access_token?.length,
+        expiresAt: session?.expires_at,
+      });
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log('[AuthContext] Auth state changed:', _event, session?.user?.email);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log(`${LOG_PREFIX} Auth state changed:`, {
+        event,
+        hasSession: !!session,
+        email: session?.user?.email,
+        userId: session?.user?.id,
+        tokenLength: session?.access_token?.length,
+      });
+      console.log(`${LOG_PREFIX} Functions auth status after change:`, JSON.stringify(getFunctionsAuthStatus()));
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      console.log(`${LOG_PREFIX} Cleaning up auth subscription`);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const profileQuery = useQuery({

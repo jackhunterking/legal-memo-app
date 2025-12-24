@@ -6,6 +6,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
+import { ContactProvider } from "@/contexts/ContactContext";
+import { UsageProvider } from "@/contexts/UsageContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -29,8 +31,11 @@ function RootLayoutNav() {
       <Stack.Screen name="recording" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="processing" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="meeting/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="contact/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="edit-meeting" options={{ headerShown: false, presentation: "modal" }} />
+      <Stack.Screen name="edit-contact" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="search" options={{ headerShown: false, presentation: "modal" }} />
+      <Stack.Screen name="subscription" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" options={{ title: "Not Found" }} />
     </Stack>
   );
@@ -45,10 +50,14 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <MeetingProvider>
-            <StatusBar style="light" />
-            <RootLayoutNav />
-          </MeetingProvider>
+          <UsageProvider>
+            <MeetingProvider>
+              <ContactProvider>
+                <StatusBar style="light" />
+                <RootLayoutNav />
+              </ContactProvider>
+            </MeetingProvider>
+          </UsageProvider>
         </AuthProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>

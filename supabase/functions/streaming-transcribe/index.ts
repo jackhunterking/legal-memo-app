@@ -1,12 +1,18 @@
 /**
  * Supabase Edge Function: streaming-transcribe
  * 
- * Handles real-time streaming transcription with AssemblyAI.
+ * Handles real-time streaming transcription with AssemblyAI v3 API.
  * 
  * Actions (passed in request body):
  * - start-session: Initialize streaming session for a meeting
  * - process-chunk: Send audio chunk and receive transcripts
  * - end-session: Terminate streaming session
+ * 
+ * AssemblyAI v3 Streaming API:
+ * - WebSocket URL: wss://streaming.assemblyai.com/v3/ws
+ * - Auth: token query parameter
+ * - Audio: Raw binary PCM chunks
+ * - Messages: Begin, Turn, Termination
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
@@ -18,7 +24,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// AssemblyAI Streaming API v3 configuration
+// AssemblyAI v3 Streaming API configuration
 const ASSEMBLYAI_STREAMING_URL = "wss://streaming.assemblyai.com/v3/ws";
 const ASSEMBLYAI_SAMPLE_RATE = 16000;
 
@@ -39,41 +45,47 @@ function errorResponse(message: string, status = 400) {
   return jsonResponse({ error: message }, status);
 }
 
-// Types for AssemblyAI messages
-interface AssemblyAISessionBegins {
-  message_type: "SessionBegins";
-  session_id: string;
+// Types for AssemblyAI v3 messages
+interface AssemblyAIV3Begin {
+  type: "Begin";
+  id: string;
   expires_at: string;
 }
 
-interface AssemblyAITranscript {
-  message_type: "PartialTranscript" | "FinalTranscript";
-  audio_start: number;
-  audio_end: number;
-  confidence: number;
+interface AssemblyAIV3Word {
   text: string;
-  words?: Array<{
-    text: string;
-    start: number;
-    end: number;
-    confidence: number;
-    speaker?: string;
-  }>;
+  start: number;
+  end: number;
+  confidence: number;
+  word_is_final: boolean;
 }
 
-interface AssemblyAISessionTerminated {
-  message_type: "SessionTerminated";
+interface AssemblyAIV3Turn {
+  type: "Turn";
+  turn_order: number;
+  turn_is_formatted: boolean;
+  end_of_turn: boolean;
+  transcript: string;
+  utterance?: string;
+  end_of_turn_confidence: number;
+  words: AssemblyAIV3Word[];
 }
 
-interface AssemblyAIError {
+interface AssemblyAIV3Termination {
+  type: "Termination";
+  audio_duration_seconds: number;
+  session_duration_seconds: number;
+}
+
+interface AssemblyAIV3Error {
   error: string;
 }
 
-type AssemblyAIMessage = 
-  | AssemblyAISessionBegins 
-  | AssemblyAITranscript 
-  | AssemblyAISessionTerminated 
-  | AssemblyAIError;
+type AssemblyAIV3Message = 
+  | AssemblyAIV3Begin 
+  | AssemblyAIV3Turn 
+  | AssemblyAIV3Termination 
+  | AssemblyAIV3Error;
 
 /**
  * Convert audio from M4A/AAC to PCM16 @ 16kHz using CloudConvert
@@ -196,34 +208,49 @@ async function convertAudioToPCM16(
 }
 
 /**
- * Process audio chunk through AssemblyAI streaming
+ * Convert base64 to Uint8Array for binary WebSocket sending
+ */
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Process audio chunk through AssemblyAI v3 streaming
  */
 async function processAudioWithAssemblyAI(
   pcmBase64: string,
   assemblyAIKey: string
-): Promise<{ partial: string; finals: AssemblyAITranscript[] }> {
+): Promise<{ partial: string; finals: AssemblyAIV3Turn[] }> {
   return new Promise((resolve, reject) => {
-    const wsUrl = `${ASSEMBLYAI_STREAMING_URL}?sample_rate=${ASSEMBLYAI_SAMPLE_RATE}`;
-    console.log(`[streaming-transcribe] Connecting to AssemblyAI...`);
+    // v3: Token in query parameter
+    const wsUrl = `${ASSEMBLYAI_STREAMING_URL}?sample_rate=${ASSEMBLYAI_SAMPLE_RATE}&token=${encodeURIComponent(assemblyAIKey)}`;
+    console.log(`[streaming-transcribe] Connecting to AssemblyAI v3...`);
 
     const ws = new WebSocket(wsUrl);
-    const finals: AssemblyAITranscript[] = [];
+    const finals: AssemblyAIV3Turn[] = [];
     let partial = "";
     let audioSent = false;
+    let sessionStarted = false;
 
     const timeout = setTimeout(() => {
+      console.log("[streaming-transcribe] Timeout reached, closing...");
       ws.close();
       resolve({ partial, finals });
-    }, 10000);
+    }, 15000);
 
     ws.onopen = () => {
-      console.log("[streaming-transcribe] WebSocket opened, authenticating...");
-      ws.send(JSON.stringify({ token: assemblyAIKey }));
+      console.log("[streaming-transcribe] WebSocket opened (v3 - no auth message needed)");
+      // v3: No auth message needed - token is in URL
     };
 
     ws.onmessage = (event) => {
       try {
-        const message: AssemblyAIMessage = JSON.parse(event.data);
+        const message: AssemblyAIV3Message = JSON.parse(event.data);
 
         if ("error" in message) {
           console.error("[streaming-transcribe] AssemblyAI error:", message.error);
@@ -233,31 +260,46 @@ async function processAudioWithAssemblyAI(
           return;
         }
 
-        switch (message.message_type) {
-          case "SessionBegins":
-            console.log(`[streaming-transcribe] Session started`);
+        switch (message.type) {
+          case "Begin":
+            console.log(`[streaming-transcribe] Session started: ${message.id}`);
+            sessionStarted = true;
+            
+            // Send audio after session starts
             if (!audioSent) {
-              ws.send(JSON.stringify({ audio_data: pcmBase64 }));
+              // v3: Send raw binary audio
+              const audioBytes = base64ToUint8Array(pcmBase64);
+              ws.send(audioBytes);
               audioSent = true;
+              console.log(`[streaming-transcribe] Sent ${audioBytes.length} bytes of audio`);
+              
+              // Send terminate after a short delay
               setTimeout(() => {
-                ws.send(JSON.stringify({ terminate_session: true }));
-              }, 500);
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: "Terminate" }));
+                  console.log("[streaming-transcribe] Sent Terminate");
+                }
+              }, 1000);
             }
             break;
 
-          case "PartialTranscript":
-            if (message.text) partial = message.text;
-            break;
-
-          case "FinalTranscript":
-            if (message.text) {
-              console.log(`[streaming-transcribe] Final: ${message.text}`);
-              finals.push(message);
+          case "Turn":
+            const turn = message as AssemblyAIV3Turn;
+            if (turn.transcript) {
+              if (turn.end_of_turn) {
+                console.log(`[streaming-transcribe] Final turn: ${turn.transcript}`);
+                finals.push(turn);
+              } else {
+                partial = turn.transcript;
+              }
             }
             break;
 
-          case "SessionTerminated":
-            console.log("[streaming-transcribe] Session terminated");
+          case "Termination":
+            console.log("[streaming-transcribe] Session terminated:", {
+              audio_duration: message.audio_duration_seconds,
+              session_duration: message.session_duration_seconds,
+            });
             clearTimeout(timeout);
             ws.close();
             resolve({ partial, finals });
@@ -274,7 +316,8 @@ async function processAudioWithAssemblyAI(
       reject(new Error("WebSocket connection error"));
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log("[streaming-transcribe] WebSocket closed:", event.code);
       clearTimeout(timeout);
       resolve({ partial, finals });
     };
@@ -290,7 +333,7 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  console.log("[streaming-transcribe] === Request received ===");
+  console.log("[streaming-transcribe] === Request received (v3 API) ===");
 
   try {
     // Get environment variables
@@ -300,8 +343,6 @@ Deno.serve(async (req: Request) => {
     const assemblyAIKey = Deno.env.get("ASSEMBLYAI_API_KEY");
     const cloudConvertApiKey = Deno.env.get("CLOUDCONVERT_API_KEY");
 
-    console.log("[streaming-transcribe] Env check - URL:", !!supabaseUrl, "ANON:", !!supabaseAnonKey, "SERVICE:", !!supabaseServiceKey, "ASSEMBLY:", !!assemblyAIKey);
-
     if (!supabaseUrl || !supabaseAnonKey) {
       return errorResponse("Server configuration error: Missing Supabase URL or Anon Key", 500);
     }
@@ -310,45 +351,30 @@ Deno.serve(async (req: Request) => {
       return errorResponse("Server configuration error: ASSEMBLYAI_API_KEY not configured", 500);
     }
 
-    // Get the auth header - per Supabase guidance for Edge Functions
+    // Get the auth header
     const authHeader = req.headers.get("Authorization");
-    console.log("[streaming-transcribe] Auth header present:", !!authHeader);
-    
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return errorResponse("Missing or invalid Authorization header", 401);
     }
 
-    // Extract JWT token from "Bearer <token>" - this is the correct way per Supabase
     const jwt = authHeader.replace("Bearer ", "");
-    console.log("[streaming-transcribe] JWT extracted, length:", jwt.length);
 
-    // Create a Supabase client for auth validation
+    // Create Supabase client for auth validation
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    // Validate the user's token by passing JWT directly to getUser()
-    // This is the correct way to validate JWT tokens in Edge Functions per Supabase docs
+    // Validate user token
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt);
-    
-    console.log("[streaming-transcribe] Auth result - user:", !!user, "error:", userError?.message || "none");
 
-    if (userError) {
-      console.error("[streaming-transcribe] Auth validation error:", userError);
-      return errorResponse(`Authentication failed: ${userError.message}`, 401);
-    }
-
-    if (!user) {
-      return errorResponse("Invalid or expired token - no user found", 401);
+    if (userError || !user) {
+      return errorResponse("Authentication failed", 401);
     }
 
     const userId = user.id;
     console.log("[streaming-transcribe] User authenticated:", userId);
 
-    // Create an admin client for database operations (bypasses RLS)
+    // Create admin client for database operations
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -376,8 +402,6 @@ Deno.serve(async (req: Request) => {
           return errorResponse("Missing meeting_id", 400);
         }
 
-        console.log("[streaming-transcribe] Looking up meeting:", meetingId);
-
         // Verify the meeting belongs to the user
         const { data: meeting, error: meetingError } = await supabaseAdmin
           .from("meetings")
@@ -385,16 +409,9 @@ Deno.serve(async (req: Request) => {
           .eq("id", meetingId)
           .single();
 
-        if (meetingError) {
-          console.error("[streaming-transcribe] Meeting lookup error:", meetingError);
-          return errorResponse(`Meeting lookup failed: ${meetingError.message}`, 404);
-        }
-
-        if (!meeting) {
+        if (meetingError || !meeting) {
           return errorResponse("Meeting not found", 404);
         }
-
-        console.log("[streaming-transcribe] Meeting found, owner:", meeting.user_id, "requester:", userId);
 
         if (meeting.user_id !== userId) {
           return errorResponse("You don't have permission to access this meeting", 403);
@@ -404,7 +421,7 @@ Deno.serve(async (req: Request) => {
         const sessionId = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
 
-        // Try to insert session record (non-blocking, won't fail the request)
+        // Insert session record
         try {
           await supabaseAdmin
             .from("streaming_sessions")
@@ -415,7 +432,6 @@ Deno.serve(async (req: Request) => {
               expires_at: expiresAt,
               status: "active",
             });
-          console.log("[streaming-transcribe] Session record created");
         } catch (insertErr) {
           console.warn("[streaming-transcribe] Session record insert warning:", insertErr);
         }
@@ -426,6 +442,7 @@ Deno.serve(async (req: Request) => {
           session_id: sessionId,
           expires_at: expiresAt,
           meeting_id: meetingId,
+          api_version: "v3",
         });
       }
 
@@ -452,9 +469,9 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        // Process through AssemblyAI
+        // Process through AssemblyAI v3
         let partial = "";
-        let finals: AssemblyAITranscript[] = [];
+        let finals: AssemblyAIV3Turn[] = [];
         
         try {
           const result = await processAudioWithAssemblyAI(pcmBase64, assemblyAIKey);
@@ -462,7 +479,6 @@ Deno.serve(async (req: Request) => {
           finals = result.finals;
         } catch (aiError) {
           console.error("[streaming-transcribe] AssemblyAI error:", aiError);
-          // Return empty results instead of failing
         }
 
         // Save segments to database
@@ -474,23 +490,19 @@ Deno.serve(async (req: Request) => {
           confidence: number;
         }> = [];
         
-        for (const final of finals) {
-          let speaker = "Speaker A";
-          if (final.words?.length) {
-            const speakerWord = final.words.find(w => w.speaker);
-            if (speakerWord?.speaker) speaker = speakerWord.speaker;
-          }
-
+        for (const turn of finals) {
+          if (!turn.transcript) continue;
+          
           const segment = {
-            text: final.text,
-            speaker,
-            start_ms: final.audio_start,
-            end_ms: final.audio_end,
-            confidence: final.confidence,
+            text: turn.transcript,
+            speaker: "Speaker A", // v3 doesn't have speaker diarization in streaming
+            start_ms: turn.words?.[0]?.start ?? 0,
+            end_ms: turn.words?.[turn.words.length - 1]?.end ?? 0,
+            confidence: turn.end_of_turn_confidence,
           };
           finalSegments.push(segment);
 
-          // Insert segment (non-blocking)
+          // Insert segment
           supabaseAdmin
             .from("transcript_segments")
             .insert({
@@ -505,7 +517,7 @@ Deno.serve(async (req: Request) => {
             .then(() => {});
         }
 
-        // Update session chunk count (non-blocking)
+        // Update session chunk count
         supabaseAdmin
           .from("streaming_sessions")
           .update({ 

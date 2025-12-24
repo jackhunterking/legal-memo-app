@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,21 +7,37 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X } from "lucide-react-native";
+import { X, ChevronDown, Check } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
+import type { MeetingType } from "@/types";
 
 export default function EditMeetingScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: meeting } = useMeetingDetails(id || null);
-  const { updateMeeting, isUpdating } = useMeetings();
+  const { updateMeeting, isUpdating, meetingTypes } = useMeetings();
 
   const [title, setTitle] = useState(meeting?.title || "");
+  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(meeting?.meeting_type_id || null);
+  const [showTypeSelector, setShowTypeSelector] = useState(false);
+
+  // Update state when meeting data loads
+  useEffect(() => {
+    if (meeting) {
+      setTitle(meeting.title);
+      setSelectedTypeId(meeting.meeting_type_id || null);
+    }
+  }, [meeting]);
+
+  const selectedType = selectedTypeId 
+    ? meetingTypes.find(t => t.id === selectedTypeId) 
+    : null;
 
   const handleSave = async () => {
     if (!id) return;
@@ -33,7 +49,10 @@ export default function EditMeetingScreen() {
     try {
       await updateMeeting({
         meetingId: id,
-        updates: { title: title.trim() || "Untitled Meeting" },
+        updates: { 
+          title: title.trim() || "Untitled Meeting",
+          meeting_type_id: selectedTypeId,
+        },
       });
       router.back();
     } catch (err) {
@@ -46,6 +65,14 @@ export default function EditMeetingScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     router.back();
+  };
+
+  const handleSelectType = (type: MeetingType | null) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setSelectedTypeId(type?.id || null);
+    setShowTypeSelector(false);
   };
 
   if (!meeting) {
@@ -66,7 +93,7 @@ export default function EditMeetingScreen() {
           <View style={styles.placeholder} />
         </View>
 
-        <View style={styles.content}>
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.section}>
             <Text style={styles.label}>Title</Text>
             <TextInput
@@ -78,7 +105,71 @@ export default function EditMeetingScreen() {
               autoFocus
             />
           </View>
-        </View>
+
+          <View style={styles.section}>
+            <Text style={styles.label}>Meeting Type</Text>
+            <Pressable
+              style={styles.typeSelector}
+              onPress={() => setShowTypeSelector(!showTypeSelector)}
+            >
+              {selectedType ? (
+                <View style={styles.selectedType}>
+                  <View style={[styles.typeDot, { backgroundColor: selectedType.color }]} />
+                  <Text style={styles.selectedTypeText}>{selectedType.name}</Text>
+                </View>
+              ) : (
+                <Text style={styles.typePlaceholder}>Select a type (optional)</Text>
+              )}
+              <ChevronDown 
+                size={20} 
+                color={Colors.textMuted}
+                style={showTypeSelector ? { transform: [{ rotate: '180deg' }] } : undefined}
+              />
+            </Pressable>
+
+            {/* Type Options Dropdown */}
+            {showTypeSelector && (
+              <View style={styles.typeDropdown}>
+                {/* No Type Option */}
+                <Pressable
+                  style={[
+                    styles.typeOption,
+                    selectedTypeId === null && styles.typeOptionSelected,
+                  ]}
+                  onPress={() => handleSelectType(null)}
+                >
+                  <View style={styles.typeOptionLeft}>
+                    <View style={[styles.typeOptionDot, { backgroundColor: Colors.textMuted }]} />
+                    <Text style={styles.typeOptionText}>No Type</Text>
+                  </View>
+                  {selectedTypeId === null && (
+                    <Check size={18} color={Colors.accentLight} />
+                  )}
+                </Pressable>
+
+                {/* Type Options */}
+                {meetingTypes.map((type) => (
+                  <Pressable
+                    key={type.id}
+                    style={[
+                      styles.typeOption,
+                      selectedTypeId === type.id && styles.typeOptionSelected,
+                    ]}
+                    onPress={() => handleSelectType(type)}
+                  >
+                    <View style={styles.typeOptionLeft}>
+                      <View style={[styles.typeOptionDot, { backgroundColor: type.color }]} />
+                      <Text style={styles.typeOptionText}>{type.name}</Text>
+                    </View>
+                    {selectedTypeId === type.id && (
+                      <Check size={18} color={Colors.accentLight} />
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        </ScrollView>
 
         <View style={styles.footer}>
           <Pressable
@@ -150,6 +241,69 @@ const styles = StyleSheet.create({
     color: Colors.text,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  typeSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  selectedType: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  typeDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  selectedTypeText: {
+    fontSize: 16,
+    color: Colors.text,
+  },
+  typePlaceholder: {
+    fontSize: 16,
+    color: Colors.textMuted,
+  },
+  typeDropdown: {
+    marginTop: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: "hidden",
+  },
+  typeOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  typeOptionSelected: {
+    backgroundColor: Colors.accentLight + "15",
+  },
+  typeOptionLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  typeOptionDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  typeOptionText: {
+    fontSize: 16,
+    color: Colors.text,
   },
   footer: {
     paddingHorizontal: 24,

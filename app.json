@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Legal Meeting Assistant",
-    "slug": "legal-meeting-assistant",
+    "name": "Legal Memo",
+    "slug": "legal-memo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.legal-meeting-assistant",
+      "bundleIdentifier": "app.rork.legal-memo",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Allow $(PRODUCT_NAME) to access your Face ID biometric data.",
         "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to access your microphone",
@@ -32,7 +32,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.legal_meeting_assistant",
+      "package": "app.rork.legal_memo",
       "permissions": [
         "android.permission.VIBRATE",
         "android.permission.RECORD_AUDIO",
@@ -48,6 +48,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-dev-client",
       [
         "expo-router",
         {
@@ -66,7 +67,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone to record meetings.",
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone to record legal memos.",
           "recordAudioAndroid": true,
           "enableBackgroundRecording": true
         }
@@ -74,12 +75,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./local/assets/notification_icon.png",
           "color": "#ffffff",
           "defaultChannel": "default",
-          "sounds": [
-            "./local/assets/notification_sound.wav"
-          ],
           "enableBackgroundRemoteNotifications": false
         }
       ],

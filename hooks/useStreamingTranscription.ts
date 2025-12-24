@@ -5,10 +5,9 @@
  * Works with useChunkedRecording to accumulate and display transcripts.
  * 
  * Per AssemblyAI Streaming API v3:
- * - PartialTranscript: Interim results that may change (shown with animation)
- * - FinalTranscript: Immutable final results (stored permanently)
- * 
- * @see Plan: AssemblyAI Streaming API v3 section
+ * - Turn messages contain ongoing transcription
+ * - end_of_turn: true indicates final result for that turn
+ * - Partial results come in Turn messages with end_of_turn: false
  */
 
 import { useState, useCallback, useRef } from "react";
@@ -16,7 +15,7 @@ import type { ChunkResult, StreamingSegment } from "./useChunkedRecording";
 
 /**
  * Transcript turn representing a final transcript segment
- * Maps to AssemblyAI FinalTranscript message structure
+ * Maps to AssemblyAI v3 Turn message with end_of_turn: true
  */
 export interface TranscriptTurn {
   id: string;
@@ -105,10 +104,10 @@ export function useStreamingTranscription(): UseStreamingTranscriptionReturn {
    * Updates partial text and accumulates final segments
    */
   const processChunkResult = useCallback((result: ChunkResult): void => {
-    // Update partial text (PartialTranscript from AssemblyAI)
+    // Update partial text (Turn with end_of_turn: false)
     setCurrentPartial(result.partialText);
 
-    // Process final segments (FinalTranscript from AssemblyAI)
+    // Process final segments (Turn with end_of_turn: true)
     if (result.finalSegments.length > 0) {
       const newTurns: TranscriptTurn[] = result.finalSegments.map((segment) => ({
         id: generateTurnId(),
