@@ -1,0 +1,22 @@
+diff --git a/node_modules/expo-notifications/ios/EXNotifications/Notifications/Presenting/PresentationModule.swift b/node_modules/expo-notifications/ios/EXNotifications/Notifications/Presenting/PresentationModule.swift
+index 6f137fc..c98deb8 100644
+--- a/node_modules/expo-notifications/ios/EXNotifications/Notifications/Presenting/PresentationModule.swift
++++ b/node_modules/expo-notifications/ios/EXNotifications/Notifications/Presenting/PresentationModule.swift
+@@ -19,7 +19,7 @@ open class PresentationModule: Module {
+     }
+ 
+     AsyncFunction("dismissAllNotificationsAsync") {
+-      await removeAllDeliveredNotifications()
++      self.removeAllDeliveredNotifications()
+     }
+   }
+ 
+@@ -34,7 +34,7 @@ open class PresentationModule: Module {
+     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [identifier])
+   }
+ 
+-  open func removeAllDeliveredNotifications() async {
++  open func removeAllDeliveredNotifications() {
+     UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+   }
+ }
