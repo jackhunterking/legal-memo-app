@@ -1,8 +1,8 @@
 /**
  * UsageContext
  * 
- * Manages subscription status and usage tracking for Polar web checkout billing.
- * Handles the Supabase-side data (usage minutes, transactions, free trial, subscription).
+ * Manages subscription status and usage tracking for Polar billing.
+ * Uses @polar-sh/supabase SDK for payment integration.
  * 
  * Provides hooks to:
  * - Check if user can record (has credits/subscription)

@@ -1,13 +1,14 @@
 /**
  * Subscription Management Screen
  * 
- * Uses Polar.sh for web-based checkout (opens in Safari).
+ * Uses Polar.sh for web-based checkout via @polar-sh/supabase SDK.
  * $97/month for unlimited transcription access.
  * 
  * Features:
  * - Web checkout via Polar.sh (opens in Safari)
  * - 7-day free trial
  * - Subscription status from Supabase
+ * - Customer portal for subscription management
  * - Apple-required disclosure before external checkout
  */
 
@@ -48,6 +49,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
 import { SUBSCRIPTION_PLAN } from "@/types";
+
+// Supabase project URL for Edge Functions
+const SUPABASE_URL = "https://jaepslscnnjtowwkiudu.supabase.co";
+
+// Polar product price ID (set in Supabase secrets)
+const POLAR_PRODUCT_PRICE_ID = process.env.EXPO_PUBLIC_POLAR_PRODUCT_PRICE_ID || "";
 
 export default function SubscriptionScreen() {
   const router = useRouter();
@@ -106,34 +113,47 @@ export default function SubscriptionScreen() {
   }, [session]);
 
   /**
-   * Create Polar checkout session and open in Safari
+   * Build Polar checkout URL and open in Safari
+   * Uses the @polar-sh/supabase SDK checkout endpoint
    */
   const openPolarCheckout = async () => {
     setIsProcessing(true);
 
     try {
-      console.log('[Subscription] Creating Polar checkout session...');
+      console.log('[Subscription] Building Polar checkout URL...');
       
-      // Call our Edge Function to create a checkout session
-      const { data, error } = await supabase.functions.invoke('create-polar-checkout', {
-        body: {},
+      // Get the product price ID from env or use default
+      const priceId = POLAR_PRODUCT_PRICE_ID;
+      if (!priceId) {
+        throw new Error('Product not configured');
+      }
+
+      // Build checkout URL with query parameters
+      // The SDK handles the checkout flow via GET request
+      const params = new URLSearchParams({
+        products: priceId,
       });
 
-      if (error) {
-        console.error('[Subscription] Checkout error:', error);
-        throw new Error(error.message || 'Failed to create checkout');
+      // Add customer info if available
+      if (user?.email) {
+        params.set('customerEmail', user.email);
+      }
+      
+      // Add user ID as external ID for linking
+      if (user?.id) {
+        params.set('customerExternalId', user.id);
+        // Also add as metadata for webhook processing
+        const metadata = JSON.stringify({ supabase_user_id: user.id });
+        params.set('metadata', metadata);
       }
 
-      if (!data?.checkout_url) {
-        throw new Error('No checkout URL returned');
-      }
-
-      console.log('[Subscription] Opening checkout URL:', data.checkout_url);
+      const checkoutUrl = `${SUPABASE_URL}/functions/v1/polar-checkout?${params.toString()}`;
+      console.log('[Subscription] Opening checkout URL:', checkoutUrl);
       
       // Open in Safari (external browser)
-      const canOpen = await Linking.canOpenURL(data.checkout_url);
+      const canOpen = await Linking.canOpenURL(checkoutUrl);
       if (canOpen) {
-        await Linking.openURL(data.checkout_url);
+        await Linking.openURL(checkoutUrl);
       } else {
         throw new Error('Cannot open checkout URL');
       }
@@ -152,23 +172,53 @@ export default function SubscriptionScreen() {
 
   /**
    * Open Polar customer portal for subscription management
+   * Uses the @polar-sh/supabase SDK customer portal endpoint
    */
   const handleManageSubscription = useCallback(async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    // Open Polar customer portal
-    const portalUrl = "https://polar.sh/legal-memo/portal";
-    
+    setIsProcessing(true);
+
     try {
+      console.log('[Subscription] Opening customer portal...');
+      
+      // Get the polar_customer_id from the subscription
+      const polarCustomerId = subscription?.polar_customer_id;
+      
+      if (!polarCustomerId) {
+        // Fallback: Try to get from profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('polar_customer_id')
+          .eq('id', user?.id)
+          .single();
+          
+        if (!profile?.polar_customer_id) {
+          throw new Error('No subscription found');
+        }
+        
+        const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(profile.polar_customer_id)}`;
+        const canOpen = await Linking.canOpenURL(portalUrl);
+        if (canOpen) {
+          await Linking.openURL(portalUrl);
+        }
+        return;
+      }
+
+      // Build customer portal URL with Polar customer ID
+      const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(polarCustomerId)}`;
+      console.log('[Subscription] Opening portal URL:', portalUrl);
+      
+      // Open in Safari (external browser)
       const canOpen = await Linking.canOpenURL(portalUrl);
       if (canOpen) {
         await Linking.openURL(portalUrl);
       } else {
         Alert.alert(
           "Manage Subscription",
-          "To manage your subscription, visit polar.sh/legal-memo/portal in your web browser.",
+          "Unable to open subscription management. Please try again later.",
           [{ text: "OK", style: "default" }]
         );
       }
@@ -176,11 +226,13 @@ export default function SubscriptionScreen() {
       console.error('[Subscription] Error opening portal:', error);
       Alert.alert(
         "Error",
-        "Unable to open subscription management. Please try again.",
+        error instanceof Error ? error.message : "Unable to open subscription management. Please try again.",
         [{ text: "OK", style: "default" }]
       );
+    } finally {
+      setIsProcessing(false);
     }
-  }, []);
+  }, [subscription?.polar_customer_id, user?.id]);
 
   // Loading state
   if (isLoading) {

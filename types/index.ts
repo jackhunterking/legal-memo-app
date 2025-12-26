@@ -35,9 +35,8 @@ export interface Profile {
   // Billing settings
   hourly_rate: number | null;
   currency_symbol: string;
-  // Payment integration fields (Polar and legacy RevenueCat)
+  // Payment integration (Polar)
   polar_customer_id: string | null;
-  revenuecat_customer_id: string | null; // Legacy - keeping for backwards compatibility
   has_free_trial: boolean;
   free_trial_minutes_remaining: number;
   created_at: string;
@@ -51,21 +50,16 @@ export interface Profile {
 /** Subscription status */
 export type SubscriptionStatus = 'active' | 'canceled' | 'expired' | 'billing_issue' | 'trialing' | 'past_due' | 'incomplete';
 
-/** Payment store type */
-export type PaymentStore = 'polar' | 'app_store' | 'play_store';
+/** Payment store type (Polar only) */
+export type PaymentStore = 'polar';
 
 /** Subscription record */
 export interface Subscription {
   id: string;
   user_id: string;
-  // Polar fields (primary)
+  // Polar fields
   polar_subscription_id: string | null;
   polar_customer_id: string | null;
-  // Legacy RevenueCat fields (for backwards compatibility)
-  revenuecat_subscription_id: string | null;
-  revenuecat_customer_id: string | null;
-  original_transaction_id: string | null;
-  product_id: string | null;
   status: SubscriptionStatus;
   plan_name: string;
   monthly_minutes_included: number;
@@ -103,9 +97,8 @@ export interface UsageTransaction {
   minutes: number;
   transaction_type: UsageTransactionType;
   description: string | null;
-  // Payment event IDs
+  // Polar event ID
   polar_event_id: string | null;
-  revenuecat_event_id: string | null; // Legacy
   created_at: string;
 }
 
