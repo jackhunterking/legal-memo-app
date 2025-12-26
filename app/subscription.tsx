@@ -1,15 +1,17 @@
 /**
  * Subscription Management Screen
  * 
- * Displays:
- * - Current subscription status
- * - Usage this billing period
- * - Free trial status (if applicable)
- * - Subscribe/Upgrade button
- * - Link to Polar customer portal
+ * Uses Polar.sh for web-based checkout (opens in Safari).
+ * $97/month for unlimited transcription access.
+ * 
+ * Features:
+ * - Web checkout via Polar.sh (opens in Safari)
+ * - 7-day free trial
+ * - Subscription status from Supabase
+ * - Apple-required disclosure before external checkout
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -17,92 +19,170 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
-  Linking,
   Alert,
   Platform,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ArrowLeft,
   CreditCard,
-  Clock,
-  TrendingUp,
   Gift,
-  AlertTriangle,
-  ExternalLink,
   Check,
   Zap,
+  RefreshCw,
+  Crown,
+  ExternalLink,
+  Info,
+  Infinity,
+  Mic,
+  Users,
+  FileText,
+  Share2,
+  Shield,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useUsage } from "@/contexts/UsageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
-import { SUBSCRIPTION_PLAN, formatUsage, calculateOverageCharge } from "@/types";
-
-// Polar checkout URL - replace with your actual checkout link
-const POLAR_CHECKOUT_URL = process.env.EXPO_PUBLIC_POLAR_CHECKOUT_URL || "https://polar.sh/checkout";
-const POLAR_PORTAL_URL = "https://polar.sh/purchases/subscriptions";
+import { SUBSCRIPTION_PLAN } from "@/types";
 
 export default function SubscriptionScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const { 
-    usageState, 
-    isLoading, 
-    refreshUsage, 
+    subscription,
+    isLoading: usageLoading, 
+    refreshUsage,
     hasActiveSubscription,
-    isInFreeTrial,
-    transactions,
   } = useUsage();
   
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleRefresh = async () => {
+  const isLoading = usageLoading;
+  const hasProEntitlement = hasActiveSubscription;
+
+  /**
+   * Refresh subscription data
+   */
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    
     await refreshUsage();
+    
     setIsRefreshing(false);
-  };
+  }, [refreshUsage]);
 
-  const handleSubscribe = async () => {
+  /**
+   * Show Apple-required disclosure and then open Polar checkout
+   */
+  const handleSubscribe = useCallback(async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    // Apple requires disclosure before linking to external payment
+    Alert.alert(
+      "External Purchase",
+      `You will be redirected to our secure checkout page to start your ${SUBSCRIPTION_PLAN.freeTrialDays}-day free trial.\n\nAfter the trial, you'll be charged $${SUBSCRIPTION_PLAN.priceMonthly}/month for unlimited access.\n\nThis purchase is not made through Apple and is not covered by Apple's refund policy.`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Start Free Trial",
+          style: "default",
+          onPress: () => openPolarCheckout(),
+        },
+      ]
+    );
+  }, [session]);
+
+  /**
+   * Create Polar checkout session and open in Safari
+   */
+  const openPolarCheckout = async () => {
+    setIsProcessing(true);
+
     try {
-      // Build checkout URL with user metadata for linking
-      const checkoutUrl = `${POLAR_CHECKOUT_URL}?metadata[user_id]=${user?.id}&metadata[email]=${encodeURIComponent(user?.email || "")}`;
+      console.log('[Subscription] Creating Polar checkout session...');
       
-      const supported = await Linking.canOpenURL(checkoutUrl);
-      if (supported) {
-        await Linking.openURL(checkoutUrl);
-      } else {
-        Alert.alert("Error", "Unable to open checkout page. Please try again later.");
+      // Call our Edge Function to create a checkout session
+      const { data, error } = await supabase.functions.invoke('create-polar-checkout', {
+        body: {},
+      });
+
+      if (error) {
+        console.error('[Subscription] Checkout error:', error);
+        throw new Error(error.message || 'Failed to create checkout');
       }
+
+      if (!data?.checkout_url) {
+        throw new Error('No checkout URL returned');
+      }
+
+      console.log('[Subscription] Opening checkout URL:', data.checkout_url);
+      
+      // Open in Safari (external browser)
+      const canOpen = await Linking.canOpenURL(data.checkout_url);
+      if (canOpen) {
+        await Linking.openURL(data.checkout_url);
+      } else {
+        throw new Error('Cannot open checkout URL');
+      }
+
     } catch (error) {
-      console.error("[Subscription] Error opening checkout:", error);
-      Alert.alert("Error", "Unable to open checkout page. Please try again later.");
+      console.error('[Subscription] Error:', error);
+      Alert.alert(
+        "Error",
+        error instanceof Error ? error.message : "Unable to start checkout. Please try again.",
+        [{ text: "OK", style: "default" }]
+      );
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const handleManageSubscription = async () => {
+  /**
+   * Open Polar customer portal for subscription management
+   */
+  const handleManageSubscription = useCallback(async () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
+    // Open Polar customer portal
+    const portalUrl = "https://polar.sh/legal-memo/portal";
+    
     try {
-      const supported = await Linking.canOpenURL(POLAR_PORTAL_URL);
-      if (supported) {
-        await Linking.openURL(POLAR_PORTAL_URL);
+      const canOpen = await Linking.canOpenURL(portalUrl);
+      if (canOpen) {
+        await Linking.openURL(portalUrl);
       } else {
-        Alert.alert("Error", "Unable to open billing portal. Please try again later.");
+        Alert.alert(
+          "Manage Subscription",
+          "To manage your subscription, visit polar.sh/legal-memo/portal in your web browser.",
+          [{ text: "OK", style: "default" }]
+        );
       }
     } catch (error) {
-      console.error("[Subscription] Error opening portal:", error);
-      Alert.alert("Error", "Unable to open billing portal. Please try again later.");
+      console.error('[Subscription] Error opening portal:', error);
+      Alert.alert(
+        "Error",
+        "Unable to open subscription management. Please try again.",
+        [{ text: "OK", style: "default" }]
+      );
     }
-  };
+  }, []);
 
+  // Loading state
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -113,6 +193,11 @@ export default function SubscriptionScreen() {
       </SafeAreaView>
     );
   }
+
+  // Get subscription expiration date if available
+  const expirationDate = subscription?.current_period_end
+    ? new Date(subscription.current_period_end)
+    : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -130,7 +215,7 @@ export default function SubscriptionScreen() {
           {isRefreshing ? (
             <ActivityIndicator size="small" color={Colors.accent} />
           ) : (
-            <Text style={styles.refreshText}>Refresh</Text>
+            <RefreshCw size={20} color={Colors.accent} />
           )}
         </Pressable>
       </View>
@@ -139,207 +224,131 @@ export default function SubscriptionScreen() {
         {/* Status Card */}
         <View style={[
           styles.statusCard,
-          hasActiveSubscription ? styles.statusCardActive : 
-          isInFreeTrial ? styles.statusCardTrial : styles.statusCardInactive
+          hasProEntitlement ? styles.statusCardActive : styles.statusCardInactive
         ]}>
           <View style={styles.statusHeader}>
-            {hasActiveSubscription ? (
+            {hasProEntitlement ? (
               <>
                 <View style={styles.statusBadge}>
-                  <Check size={16} color="#10B981" />
-                  <Text style={styles.statusBadgeText}>Active</Text>
+                  <Crown size={16} color="#FFD700" />
+                  <Text style={styles.statusBadgeText}>Pro</Text>
                 </View>
-                <Text style={styles.statusTitle}>Pro Subscriber</Text>
-              </>
-            ) : isInFreeTrial ? (
-              <>
-                <View style={[styles.statusBadge, styles.statusBadgeTrial]}>
-                  <Gift size={16} color="#F59E0B" />
-                  <Text style={[styles.statusBadgeText, styles.statusBadgeTextTrial]}>Free Trial</Text>
-                </View>
-                <Text style={styles.statusTitle}>Trial Mode</Text>
+                <Text style={styles.statusTitle}>{SUBSCRIPTION_PLAN.name}</Text>
               </>
             ) : (
               <>
                 <View style={[styles.statusBadge, styles.statusBadgeInactive]}>
-                  <AlertTriangle size={16} color={Colors.error} />
-                  <Text style={[styles.statusBadgeText, styles.statusBadgeTextInactive]}>No Credits</Text>
+                  <Gift size={16} color={Colors.accent} />
+                  <Text style={[styles.statusBadgeText, styles.statusBadgeTextInactive]}>
+                    {SUBSCRIPTION_PLAN.freeTrialDays}-Day Free Trial
+                  </Text>
                 </View>
-                <Text style={styles.statusTitle}>Subscribe to Continue</Text>
+                <Text style={styles.statusTitle}>Start Your Trial</Text>
               </>
             )}
           </View>
           
-          {hasActiveSubscription && usageState.subscription && (
-            <Text style={styles.statusSubtitle}>
-              {usageState.subscription.plan_name}
-            </Text>
-          )}
-        </View>
-
-        {/* Usage Stats */}
-        <Text style={styles.sectionTitle}>Usage This Month</Text>
-        <View style={styles.statsGrid}>
-          {hasActiveSubscription ? (
+          {hasProEntitlement ? (
             <>
-              <View style={styles.statCard}>
-                <Clock size={24} color={Colors.accent} />
-                <Text style={styles.statValue}>
-                  {usageState.minutesUsedThisPeriod}
-                </Text>
-                <Text style={styles.statLabel}>Minutes Used</Text>
+              <View style={styles.unlimitedBadge}>
+                <Infinity size={20} color={Colors.success} />
+                <Text style={styles.unlimitedText}>Unlimited Access Active</Text>
               </View>
-              
-              <View style={styles.statCard}>
-                <TrendingUp size={24} color={Colors.success} />
-                <Text style={styles.statValue}>
-                  {usageState.minutesRemaining > 0 ? usageState.minutesRemaining : 0}
+              {expirationDate && (
+                <Text style={styles.statusSubtitle}>
+                  Renews {expirationDate.toLocaleDateString()}
                 </Text>
-                <Text style={styles.statLabel}>Minutes Left</Text>
-              </View>
-              
-              {usageState.overageMinutes > 0 && (
-                <View style={[styles.statCard, styles.statCardWarning]}>
-                  <AlertTriangle size={24} color={Colors.warning} />
-                  <Text style={[styles.statValue, styles.statValueWarning]}>
-                    ${usageState.estimatedOverageCharge.toFixed(2)}
-                  </Text>
-                  <Text style={styles.statLabel}>Overage Charges</Text>
-                </View>
               )}
             </>
           ) : (
-            <View style={styles.statCard}>
-              <Gift size={24} color={Colors.warning} />
-              <Text style={styles.statValue}>
-                {usageState.freeTrialMinutesRemaining}
-              </Text>
-              <Text style={styles.statLabel}>Free Minutes Left</Text>
-            </View>
+            <Text style={styles.statusSubtitle}>
+              Try all features free for {SUBSCRIPTION_PLAN.freeTrialDays} days
+            </Text>
           )}
         </View>
 
-        {/* Lifetime Stats */}
-        <View style={styles.lifetimeCard}>
-          <Text style={styles.lifetimeLabel}>Lifetime Usage</Text>
-          <Text style={styles.lifetimeValue}>
-            {usageState.lifetimeMinutesUsed} minutes transcribed
-          </Text>
+        {/* Pricing Card - only show for non-subscribers */}
+        {!hasProEntitlement && (
+          <View style={styles.pricingCard}>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceAmount}>${SUBSCRIPTION_PLAN.priceMonthly}</Text>
+              <Text style={styles.pricePeriod}>/month</Text>
+            </View>
+            <Text style={styles.priceSubtext}>After {SUBSCRIPTION_PLAN.freeTrialDays}-day free trial</Text>
+          </View>
+        )}
+
+        {/* Features */}
+        <Text style={styles.sectionTitle}>What's Included</Text>
+        <View style={styles.featuresCard}>
+          {SUBSCRIPTION_PLAN.features.map((feature, index) => {
+            const icons = [Infinity, Mic, Users, FileText, Share2, Shield];
+            const Icon = icons[index] || Check;
+            return (
+              <View key={index} style={styles.featureRow}>
+                <View style={styles.featureIcon}>
+                  <Icon size={20} color={Colors.accent} />
+                </View>
+                <Text style={styles.featureText}>{feature}</Text>
+              </View>
+            );
+          })}
         </View>
 
-        {/* Plan Details */}
-        <Text style={styles.sectionTitle}>Plan Details</Text>
-        <View style={styles.planCard}>
-          <View style={styles.planHeader}>
-            <Zap size={24} color={Colors.accent} />
-            <View style={styles.planHeaderText}>
-              <Text style={styles.planName}>{SUBSCRIPTION_PLAN.name}</Text>
-              <Text style={styles.planPrice}>
-                ${SUBSCRIPTION_PLAN.priceMonthly}/month
-              </Text>
-            </View>
-          </View>
-          
-          <View style={styles.planFeatures}>
-            <View style={styles.planFeature}>
-              <Check size={16} color={Colors.success} />
-              <Text style={styles.planFeatureText}>
-                {SUBSCRIPTION_PLAN.minutesIncluded} minutes included per month
-              </Text>
-            </View>
-            <View style={styles.planFeature}>
-              <Check size={16} color={Colors.success} />
-              <Text style={styles.planFeatureText}>
-                AI-powered transcription with speaker detection
-              </Text>
-            </View>
-            <View style={styles.planFeature}>
-              <Check size={16} color={Colors.success} />
-              <Text style={styles.planFeatureText}>
-                Automatic meeting summaries
-              </Text>
-            </View>
-            <View style={styles.planFeature}>
-              <Check size={16} color={Colors.success} />
-              <Text style={styles.planFeatureText}>
-                Shareable meeting links
-              </Text>
-            </View>
-            <View style={styles.planFeature}>
-              <AlertTriangle size={16} color={Colors.warning} />
-              <Text style={styles.planFeatureText}>
-                ${(SUBSCRIPTION_PLAN.overageRateCents / 100).toFixed(2)}/min overage
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Billing Period */}
-        {hasActiveSubscription && usageState.periodEnd && (
+        {/* Billing Period - only show for subscribers */}
+        {hasProEntitlement && expirationDate && (
           <View style={styles.billingCard}>
             <Text style={styles.billingLabel}>Current Billing Period</Text>
             <Text style={styles.billingValue}>
-              {usageState.daysRemainingInPeriod} days remaining
-            </Text>
-            <Text style={styles.billingDate}>
-              Renews on {usageState.periodEnd.toLocaleDateString()}
+              Renews on {expirationDate.toLocaleDateString()}
             </Text>
           </View>
         )}
 
         {/* Action Buttons */}
         <View style={styles.actions}>
-          {hasActiveSubscription ? (
+          {hasProEntitlement ? (
             <Pressable
               style={styles.manageButton}
               onPress={handleManageSubscription}
+              disabled={isProcessing}
             >
               <CreditCard size={20} color={Colors.text} />
               <Text style={styles.manageButtonText}>Manage Subscription</Text>
               <ExternalLink size={16} color={Colors.textMuted} />
             </Pressable>
           ) : (
-            <Pressable
-              style={styles.subscribeButton}
-              onPress={handleSubscribe}
-            >
-              <Zap size={20} color="#000" />
-              <Text style={styles.subscribeButtonText}>
-                Subscribe for ${SUBSCRIPTION_PLAN.priceMonthly}/month
-              </Text>
-            </Pressable>
+            <>
+              <Pressable
+                style={styles.subscribeButton}
+                onPress={handleSubscribe}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="small" color="#000" />
+                ) : (
+                  <>
+                    <Zap size={20} color="#000" />
+                    <Text style={styles.subscribeButtonText}>
+                      Start {SUBSCRIPTION_PLAN.freeTrialDays}-Day Free Trial
+                    </Text>
+                    <ExternalLink size={16} color="#000" />
+                  </>
+                )}
+              </Pressable>
+              
+              {/* Apple disclosure notice */}
+              <View style={styles.disclosureCard}>
+                <Info size={16} color={Colors.textMuted} />
+                <Text style={styles.disclosureText}>
+                  Your subscription will be processed through our secure web checkout. 
+                  Cancel anytime during your free trial and you won't be charged.
+                  This is not an in-app purchase and is not covered by Apple's refund policy.
+                </Text>
+              </View>
+            </>
           )}
         </View>
-
-        {/* Recent Transactions */}
-        {transactions.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>Recent Activity</Text>
-            <View style={styles.transactionsCard}>
-              {transactions.slice(0, 5).map((transaction) => (
-                <View key={transaction.id} style={styles.transactionRow}>
-                  <View style={styles.transactionInfo}>
-                    <Text style={styles.transactionType}>
-                      {transaction.transaction_type === 'recording' ? 'Recording' :
-                       transaction.transaction_type === 'free_trial' ? 'Free Trial' :
-                       transaction.transaction_type === 'subscription_reset' ? 'Period Reset' :
-                       'Adjustment'}
-                    </Text>
-                    <Text style={styles.transactionDate}>
-                      {new Date(transaction.created_at).toLocaleDateString()}
-                    </Text>
-                  </View>
-                  <Text style={[
-                    styles.transactionMinutes,
-                    transaction.minutes > 0 && styles.transactionMinutesUsed
-                  ]}>
-                    {transaction.minutes > 0 ? `-${transaction.minutes}` : transaction.minutes} min
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </>
-        )}
 
         <View style={styles.bottomPadding} />
       </ScrollView>
@@ -382,11 +391,6 @@ const styles = StyleSheet.create({
   refreshButton: {
     padding: 8,
   },
-  refreshText: {
-    color: Colors.accent,
-    fontSize: 14,
-    fontWeight: "600",
-  },
   content: {
     flex: 1,
     paddingHorizontal: 20,
@@ -398,16 +402,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   statusCardActive: {
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
-    borderColor: "rgba(16, 185, 129, 0.3)",
-  },
-  statusCardTrial: {
-    backgroundColor: "rgba(245, 158, 11, 0.1)",
-    borderColor: "rgba(245, 158, 11, 0.3)",
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
+    borderColor: "rgba(255, 215, 0, 0.3)",
   },
   statusCardInactive: {
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
-    borderColor: "rgba(239, 68, 68, 0.3)",
+    backgroundColor: "rgba(59, 130, 246, 0.1)",
+    borderColor: "rgba(59, 130, 246, 0.3)",
   },
   statusHeader: {
     flexDirection: "row",
@@ -418,27 +418,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    backgroundColor: "rgba(255, 215, 0, 0.2)",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  statusBadgeTrial: {
-    backgroundColor: "rgba(245, 158, 11, 0.2)",
-  },
   statusBadgeInactive: {
-    backgroundColor: "rgba(239, 68, 68, 0.2)",
+    backgroundColor: "rgba(59, 130, 246, 0.2)",
   },
   statusBadgeText: {
-    color: "#10B981",
+    color: "#FFD700",
     fontSize: 12,
     fontWeight: "700",
   },
-  statusBadgeTextTrial: {
-    color: "#F59E0B",
-  },
   statusBadgeTextInactive: {
-    color: Colors.error,
+    color: Colors.accent,
   },
   statusTitle: {
     fontSize: 20,
@@ -447,6 +441,51 @@ const styles = StyleSheet.create({
   },
   statusSubtitle: {
     marginTop: 8,
+    fontSize: 14,
+    color: Colors.textSecondary,
+  },
+  unlimitedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 16,
+    backgroundColor: "rgba(16, 185, 129, 0.1)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignSelf: "flex-start",
+  },
+  unlimitedText: {
+    color: Colors.success,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  pricingCard: {
+    marginTop: 20,
+    padding: 24,
+    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+  },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+  },
+  priceAmount: {
+    fontSize: 48,
+    fontWeight: "800",
+    color: Colors.text,
+  },
+  pricePeriod: {
+    fontSize: 18,
+    fontWeight: "500",
+    color: Colors.textMuted,
+    marginLeft: 4,
+  },
+  priceSubtext: {
+    marginTop: 4,
     fontSize: 14,
     color: Colors.textSecondary,
   },
@@ -459,103 +498,34 @@ const styles = StyleSheet.create({
     marginTop: 28,
     marginBottom: 12,
   },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: "45%",
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  statCardWarning: {
-    borderColor: Colors.warning,
-    backgroundColor: "rgba(245, 158, 11, 0.1)",
-  },
-  statValue: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: Colors.text,
-  },
-  statValueWarning: {
-    color: Colors.warning,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    textAlign: "center",
-  },
-  lifetimeCard: {
-    marginTop: 16,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  lifetimeLabel: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginBottom: 4,
-  },
-  lifetimeValue: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  planCard: {
+  featuresCard: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
     borderColor: Colors.border,
+    gap: 16,
   },
-  planHeader: {
+  featureRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    gap: 14,
   },
-  planHeaderText: {
-    flex: 1,
+  featureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(59, 130, 246, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  planName: {
-    fontSize: 16,
-    fontWeight: "700",
+  featureText: {
+    fontSize: 15,
     color: Colors.text,
-  },
-  planPrice: {
-    fontSize: 14,
-    color: Colors.accent,
-    fontWeight: "600",
-    marginTop: 2,
-  },
-  planFeatures: {
-    gap: 12,
-  },
-  planFeature: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  planFeatureText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
     flex: 1,
   },
   billingCard: {
-    marginTop: 16,
+    marginTop: 20,
     backgroundColor: Colors.surface,
     borderRadius: 12,
     padding: 16,
@@ -569,14 +539,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   billingValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
     color: Colors.text,
-  },
-  billingDate: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginTop: 4,
   },
   actions: {
     marginTop: 24,
@@ -588,14 +553,32 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     backgroundColor: Colors.accent,
-    paddingVertical: 16,
+    paddingVertical: 18,
     paddingHorizontal: 24,
-    borderRadius: 12,
+    borderRadius: 14,
   },
   subscribeButtonText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "700",
     color: "#000",
+    flex: 1,
+    textAlign: "center",
+  },
+  disclosureCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: Colors.surface,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  disclosureText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.textMuted,
+    lineHeight: 18,
   },
   manageButton: {
     flexDirection: "row",
@@ -615,45 +598,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
     flex: 1,
   },
-  transactionsCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  transactionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  transactionInfo: {
-    flex: 1,
-  },
-  transactionType: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  transactionDate: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  transactionMinutes: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.textMuted,
-  },
-  transactionMinutesUsed: {
-    color: Colors.error,
-  },
   bottomPadding: {
     height: 40,
   },
 });
-

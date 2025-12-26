@@ -1,0 +1,27 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "6G65A4B7Y5.app.rork.legal-memo"
+        ],
+        "components": [
+          {
+            "/": "/checkout/*",
+            "comment": "Handle Polar checkout success redirects"
+          },
+          {
+            "/": "/checkout-success",
+            "comment": "Alternative checkout success path"
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "6G65A4B7Y5.app.rork.legal-memo"
+    ]
+  }
+}
+

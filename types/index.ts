@@ -35,8 +35,9 @@ export interface Profile {
   // Billing settings
   hourly_rate: number | null;
   currency_symbol: string;
-  // Polar subscription fields
+  // Payment integration fields (Polar and legacy RevenueCat)
   polar_customer_id: string | null;
+  revenuecat_customer_id: string | null; // Legacy - keeping for backwards compatibility
   has_free_trial: boolean;
   free_trial_minutes_remaining: number;
   created_at: string;
@@ -47,15 +48,24 @@ export interface Profile {
 // Subscription & Usage Types
 // =============================================================================
 
-/** Subscription status from Polar */
-export type SubscriptionStatus = 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing';
+/** Subscription status */
+export type SubscriptionStatus = 'active' | 'canceled' | 'expired' | 'billing_issue' | 'trialing' | 'past_due' | 'incomplete';
+
+/** Payment store type */
+export type PaymentStore = 'polar' | 'app_store' | 'play_store';
 
 /** Subscription record */
 export interface Subscription {
   id: string;
   user_id: string;
-  polar_subscription_id: string;
-  polar_customer_id: string;
+  // Polar fields (primary)
+  polar_subscription_id: string | null;
+  polar_customer_id: string | null;
+  // Legacy RevenueCat fields (for backwards compatibility)
+  revenuecat_subscription_id: string | null;
+  revenuecat_customer_id: string | null;
+  original_transaction_id: string | null;
+  product_id: string | null;
   status: SubscriptionStatus;
   plan_name: string;
   monthly_minutes_included: number;
@@ -63,6 +73,8 @@ export interface Subscription {
   current_period_start: string | null;
   current_period_end: string | null;
   canceled_at: string | null;
+  store: PaymentStore | null;
+  environment: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -91,7 +103,9 @@ export interface UsageTransaction {
   minutes: number;
   transaction_type: UsageTransactionType;
   description: string | null;
+  // Payment event IDs
   polar_event_id: string | null;
+  revenuecat_event_id: string | null; // Legacy
   created_at: string;
 }
 
@@ -140,11 +154,18 @@ export interface UsageState {
 
 /** Subscription plan constants */
 export const SUBSCRIPTION_PLAN = {
-  name: 'AI Legal Note-Taking App Access',
-  priceMonthly: 10, // $10/month
-  minutesIncluded: 10, // 10 minutes included
-  overageRateCents: 100, // $1.00 per minute overage
-  freeTrialMinutes: 15, // 15 free minutes for new users
+  name: 'Unlimited Access',
+  priceMonthly: 97, // $97/month
+  isUnlimited: true, // Unlimited transcription, no minute limits
+  freeTrialDays: 7, // 7-day free trial
+  features: [
+    'Unlimited AI transcription',
+    'Speaker diarization',
+    'Automatic meeting summaries',
+    'Shareable meeting links',
+    'Contact & case management',
+    'Secure cloud storage',
+  ],
 } as const;
 
 /** 

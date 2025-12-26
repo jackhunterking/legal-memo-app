@@ -271,9 +271,13 @@ Monetize your app:
 - **Stripe** - Credit card payments and subscriptions - [Expo + Stripe Guide](https://docs.expo.dev/guides/using-stripe/)
 - **PayPal** - PayPal payments integration - [Setup Guide](https://developer.paypal.com/docs/checkout/mobile/react-native/)
 
+**Merchant of Record (Web Checkout):**
+
+- **Polar.sh** - Web checkout with fast payouts and tax handling - [Developer Docs](https://docs.polar.sh/)
+- This app uses Polar.sh for subscription management via web checkout (opens in Safari)
+
 **Native In-App Purchases (requires Custom Development Build):**
 
-- **RevenueCat** - Cross-platform in-app purchases and subscriptions - [Expo Integration Guide](https://www.revenuecat.com/docs/expo)
 - **Expo In-App Purchases** - Direct App Store/Google Play integration - [Implementation Guide](https://docs.expo.dev/versions/latest/sdk/in-app-purchases/)
 
 **Paywall Optimization:**

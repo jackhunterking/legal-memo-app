@@ -3,10 +3,13 @@
   "buildCommand": null,
   "outputDirectory": ".",
   "installCommand": null,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
   "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
@@ -16,10 +19,16 @@
       ]
     }
   ],
+  "rewrites": [
+    { "source": "/.well-known/:path*", "destination": "/.well-known/:path*" },
+    { "source": "/checkout/success", "destination": "/checkout-success.html" },
+    { "source": "/checkout-success", "destination": "/checkout-success.html" },
+    { "source": "/checkout/:path*", "destination": "/checkout-success.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true
     }
   }
 }
-

@@ -1,12 +1,15 @@
 /**
  * UsageContext
  * 
- * Manages subscription status and usage tracking for Polar billing integration.
+ * Manages subscription status and usage tracking for Polar web checkout billing.
+ * Handles the Supabase-side data (usage minutes, transactions, free trial, subscription).
+ * 
  * Provides hooks to:
  * - Check if user can record (has credits/subscription)
  * - Get current usage stats
- * - Get subscription details
+ * - Get subscription details from Supabase
  * - Refresh usage after recording
+ * - Refresh subscription after Polar checkout success
  */
 
 import createContextHook from '@nkzw/create-context-hook';
@@ -225,6 +228,18 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     await queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] });
   };
 
+  /**
+   * Refresh subscription data specifically (called after Polar checkout success)
+   */
+  const refreshSubscription = async () => {
+    console.log('[UsageContext] Refreshing subscription data after checkout...');
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['subscription', user?.id] }),
+      queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] }),
+      queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
+    ]);
+  };
+
   // ============================================
   // HELPER FUNCTIONS
   // ============================================
@@ -237,21 +252,24 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   };
 
   /**
-   * Check if user's credits are running low (less than 3 minutes)
+   * Check if user's credits are running low (for free trial only)
+   * Subscribers have unlimited access
    */
   const isLowOnCredits = (): boolean => {
     if (usageState.hasActiveSubscription) {
-      return usageState.minutesRemaining < 3;
+      // Unlimited subscribers never run low
+      return false;
     }
     return usageState.freeTrialMinutesRemaining < 3;
   };
 
   /**
    * Get available minutes (free trial or subscription)
+   * Subscribers have unlimited access
    */
   const getAvailableMinutes = (): number => {
     if (usageState.hasActiveSubscription) {
-      // Subscription users can always record (overage billing)
+      // Unlimited access for subscribers
       return Infinity;
     }
     return usageState.freeTrialMinutesRemaining;
@@ -262,17 +280,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
    */
   const getCreditStatusMessage = (): string => {
     if (usageState.hasActiveSubscription) {
-      if (usageState.minutesRemaining > 0) {
-        return `${usageState.minutesRemaining} min remaining this month`;
-      }
-      return `Using overage: $${usageState.estimatedOverageCharge.toFixed(2)} so far`;
+      return 'Unlimited Access';
     }
     
     if (usageState.isInFreeTrial) {
       return `${usageState.freeTrialMinutesRemaining} free trial min remaining`;
     }
     
-    return 'Subscribe to continue recording';
+    return 'Subscribe for unlimited access';
   };
 
   return {
@@ -302,6 +317,7 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     // Refresh functions
     refreshUsage,
     refreshCanRecord,
+    refreshSubscription,
   };
 });
 
