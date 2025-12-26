@@ -64,6 +64,27 @@ export const POST = Webhooks({
   webhookSecret: Deno.env.get("POLAR_WEBHOOK_SECRET")!,
 
   /**
+   * Handle checkout created event
+   */
+  onCheckoutCreated: async (payload) => {
+    console.log("[polar-webhook] Checkout created:", payload.data.id);
+    console.log("[polar-webhook] Customer email:", payload.data.customer_email);
+    console.log("[polar-webhook] External customer ID:", payload.data.external_customer_id);
+    // Checkout created - user is on the payment page
+    // No action needed yet, wait for subscription.created after payment
+  },
+
+  /**
+   * Handle checkout updated event  
+   */
+  onCheckoutUpdated: async (payload) => {
+    console.log("[polar-webhook] Checkout updated:", payload.data.id);
+    console.log("[polar-webhook] Status:", payload.data.status);
+    // Checkout updated (status changes, etc.)
+    // No action needed, wait for subscription.created
+  },
+
+  /**
    * Handle subscription created event
    */
   onSubscriptionCreated: async (payload) => {
