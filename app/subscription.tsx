@@ -58,8 +58,16 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 // Supabase project URL for Edge Functions
 const SUPABASE_URL = "https://jaepslscnnjtowwkiudu.supabase.co";
 
-// Polar product price ID (set in Supabase secrets)
+// Polar product price IDs for production and sandbox
 const POLAR_PRODUCT_PRICE_ID = process.env.EXPO_PUBLIC_POLAR_PRODUCT_PRICE_ID || "";
+const POLAR_SANDBOX_PRODUCT_PRICE_ID = process.env.EXPO_PUBLIC_POLAR_SANDBOX_PRODUCT_PRICE_ID || "";
+
+// Polar mode: "production" (default) or "sandbox"
+const POLAR_MODE = process.env.EXPO_PUBLIC_POLAR_MODE || "production";
+const IS_SANDBOX = POLAR_MODE === "sandbox";
+
+// Use the appropriate product ID based on mode
+const ACTIVE_PRODUCT_PRICE_ID = IS_SANDBOX ? POLAR_SANDBOX_PRODUCT_PRICE_ID : POLAR_PRODUCT_PRICE_ID;
 
 // Close button delay in seconds
 const CLOSE_BUTTON_DELAY = 5;
@@ -280,11 +288,18 @@ export default function SubscriptionScreen() {
 
     try {
       console.log('[Subscription] Building Polar checkout URL...');
+      console.log('[Subscription] Mode:', POLAR_MODE);
+      console.log('[Subscription] Is Sandbox:', IS_SANDBOX);
       
-      const priceId = POLAR_PRODUCT_PRICE_ID;
+      const priceId = ACTIVE_PRODUCT_PRICE_ID;
       if (!priceId) {
-        throw new Error('Product not configured');
+        const missingVar = IS_SANDBOX 
+          ? 'EXPO_PUBLIC_POLAR_SANDBOX_PRODUCT_PRICE_ID' 
+          : 'EXPO_PUBLIC_POLAR_PRODUCT_PRICE_ID';
+        throw new Error(`Product not configured. Please set ${missingVar}`);
       }
+      
+      console.log('[Subscription] Using product ID:', priceId);
 
       const params = new URLSearchParams({
         products: priceId,
@@ -498,6 +513,13 @@ export default function SubscriptionScreen() {
           </Pressable>
         </View>
 
+        {/* Sandbox Mode Indicator */}
+        {IS_SANDBOX && (
+          <View style={styles.sandboxBanner}>
+            <Text style={styles.sandboxBannerText}>🧪 SANDBOX MODE</Text>
+          </View>
+        )}
+
         <ScrollView 
           style={styles.scrollView} 
           contentContainerStyle={styles.scrollContent}
@@ -707,6 +729,19 @@ export default function SubscriptionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  sandboxBanner: {
+    backgroundColor: "#F59E0B",
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    marginTop: Platform.OS === "ios" ? 50 : 10,
+  },
+  sandboxBannerText: {
+    color: "#000",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 1,
   },
   loadingContainer: {
     flex: 1,

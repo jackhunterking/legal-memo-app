@@ -346,13 +346,12 @@ async function generateSummary(
   return result.response || "Summary not available.";
 }
 
-// Step 4: Record usage and send to Polar meter API
+// Step 4: Record usage for analytics
+// Note: Trial is now time-based (7 days unlimited), not minute-based
 interface UsageResult {
   success: boolean;
   minutes_recorded: number;
-  minutes_from_free_trial: number;
-  minutes_from_subscription: number;
-  free_trial_remaining: number;
+  has_subscription: boolean;
   polar_event_id?: string;
   error?: string;
 }
@@ -370,25 +369,6 @@ async function recordUsageAndMeter(
   const durationMinutes = Math.ceil(durationSeconds / 60);
   console.log(`[ProcessRecording] Duration: ${durationSeconds}s = ${durationMinutes} minutes (rounded up)`);
 
-  // Get user's profile to check subscription status and free trial
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("polar_customer_id, has_free_trial, free_trial_minutes_remaining")
-    .eq("id", userId)
-    .single();
-
-  if (profileError) {
-    console.error("[ProcessRecording] Error fetching profile:", profileError);
-    return {
-      success: false,
-      minutes_recorded: durationMinutes,
-      minutes_from_free_trial: 0,
-      minutes_from_subscription: 0,
-      free_trial_remaining: 0,
-      error: "Could not fetch user profile",
-    };
-  }
-
   // Check if user has active subscription
   const { data: subscription } = await supabase
     .from("subscriptions")
@@ -398,75 +378,17 @@ async function recordUsageAndMeter(
     .single();
 
   const hasActiveSubscription = !!subscription;
-  const polarCustomerId = subscription?.polar_customer_id || profile?.polar_customer_id;
-  const freeTrialRemaining = profile?.free_trial_minutes_remaining || 0;
-  const hasFreeTrialMinutes = freeTrialRemaining > 0;
+  const polarCustomerId = subscription?.polar_customer_id;
 
-  // Determine how to allocate minutes
-  let minutesFromFreeTrial = 0;
-  let minutesFromSubscription = 0;
-
-  if (hasFreeTrialMinutes && !hasActiveSubscription) {
-    // Use free trial minutes first if no subscription
-    minutesFromFreeTrial = Math.min(durationMinutes, freeTrialRemaining);
-    minutesFromSubscription = durationMinutes - minutesFromFreeTrial;
-  } else if (hasActiveSubscription) {
-    // All minutes go to subscription metering
-    minutesFromSubscription = durationMinutes;
-  } else if (hasFreeTrialMinutes) {
-    // Only free trial available
-    minutesFromFreeTrial = Math.min(durationMinutes, freeTrialRemaining);
-    minutesFromSubscription = 0;
-  }
-
-  console.log(`[ProcessRecording] Usage allocation: free_trial=${minutesFromFreeTrial}, subscription=${minutesFromSubscription}`);
-
-  // Send usage event to Polar if user has subscription and minutes to charge
+  // Record usage in our database using the stored procedure (for analytics)
   let polarEventId: string | undefined;
   
-  if (minutesFromSubscription > 0 && polarCustomerId && polarAccessToken) {
-    try {
-      console.log("[ProcessRecording] Sending usage event to Polar...");
-      
-      const polarResponse = await fetch(`${POLAR_API_URL}/meters/events`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${polarAccessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "audio_minutes_processed",
-          customer_id: polarCustomerId,
-          properties: {
-            minutes: minutesFromSubscription,
-            meeting_id: meetingId,
-          },
-        }),
-      });
-
-      if (polarResponse.ok) {
-        const polarResult = await polarResponse.json() as { id?: string };
-        polarEventId = polarResult.id;
-        console.log(`[ProcessRecording] Polar usage event recorded: ${polarEventId}`);
-      } else {
-        const errorText = await polarResponse.text();
-        console.error("[ProcessRecording] Polar meter API error:", errorText);
-      }
-    } catch (polarError) {
-      console.error("[ProcessRecording] Error sending to Polar:", polarError);
-      // Don't fail the whole process if Polar metering fails
-    }
-  } else {
-    console.log("[ProcessRecording] Skipping Polar meter (no subscription or no minutes to charge)");
-  }
-
-  // Record usage in our database using the stored procedure
   try {
     const { data: usageResult, error: usageError } = await supabase.rpc("record_usage", {
       p_user_id: userId,
       p_meeting_id: meetingId,
       p_minutes: durationMinutes,
-      p_is_free_trial: minutesFromFreeTrial > 0,
+      p_is_free_trial: false, // Kept for backward compatibility
       p_polar_event_id: polarEventId || null,
     });
 
@@ -482,9 +404,7 @@ async function recordUsageAndMeter(
   return {
     success: true,
     minutes_recorded: durationMinutes,
-    minutes_from_free_trial: minutesFromFreeTrial,
-    minutes_from_subscription: minutesFromSubscription,
-    free_trial_remaining: Math.max(0, freeTrialRemaining - minutesFromFreeTrial),
+    has_subscription: hasActiveSubscription,
     polar_event_id: polarEventId,
   };
 }
@@ -715,9 +635,7 @@ Deno.serve(async (req: Request) => {
         },
         usage: usageResult ? {
           minutes_recorded: usageResult.minutes_recorded,
-          minutes_from_free_trial: usageResult.minutes_from_free_trial,
-          minutes_from_subscription: usageResult.minutes_from_subscription,
-          free_trial_remaining: usageResult.free_trial_remaining,
+          has_subscription: usageResult.has_subscription,
           polar_event_id: usageResult.polar_event_id,
         } : null,
       }),

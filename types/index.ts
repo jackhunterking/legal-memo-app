@@ -39,9 +39,6 @@ export interface Profile {
   polar_customer_id: string | null;
   // Time-based trial (7 days from signup)
   trial_started_at: string | null;
-  // Legacy fields (kept for backward compatibility)
-  has_free_trial: boolean;
-  free_trial_minutes_remaining: number;
   created_at: string;
   updated_at: string;
 }

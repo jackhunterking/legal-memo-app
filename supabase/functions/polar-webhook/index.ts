@@ -4,6 +4,13 @@
  * Handles Polar webhook events with manual signature verification.
  * Avoids npm SDK cold start issues.
  * 
+ * Supports both production and sandbox environments via POLAR_MODE env var.
+ * 
+ * Environment Variables:
+ * - POLAR_MODE: "production" (default) or "sandbox"
+ * - POLAR_WEBHOOK_SECRET: Production webhook secret
+ * - POLAR_SANDBOX_WEBHOOK_SECRET: Sandbox webhook secret (required if POLAR_MODE=sandbox)
+ * 
  * @see https://docs.polar.sh/developers/webhooks
  */
 
@@ -15,6 +22,25 @@ const getSupabaseAdmin = () => {
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   return createClient(supabaseUrl, supabaseServiceKey);
 };
+
+/**
+ * Get the current Polar mode and webhook secret
+ */
+function getPolarConfig(): { mode: string; webhookSecret: string | undefined } {
+  const mode = Deno.env.get("POLAR_MODE") || "production";
+  
+  if (mode === "sandbox") {
+    return {
+      mode: "sandbox",
+      webhookSecret: Deno.env.get("POLAR_SANDBOX_WEBHOOK_SECRET"),
+    };
+  }
+  
+  return {
+    mode: "production",
+    webhookSecret: Deno.env.get("POLAR_WEBHOOK_SECRET"),
+  };
+}
 
 /**
  * Verify webhook signature using HMAC-SHA256
@@ -94,24 +120,27 @@ async function findUserId(
   return null;
 }
 
-// Event handlers
-async function handleCheckoutCreated(data: any) {
+// Event handlers - now accept environment parameter
+async function handleCheckoutCreated(data: any, environment: string) {
   console.log("[polar-webhook] Checkout created:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   console.log("[polar-webhook] Customer email:", data.customer_email);
   console.log("[polar-webhook] External customer ID:", data.external_customer_id);
   // Checkout created - user is on the payment page
   // No action needed yet, wait for subscription.created after payment
 }
 
-async function handleCheckoutUpdated(data: any) {
+async function handleCheckoutUpdated(data: any, environment: string) {
   console.log("[polar-webhook] Checkout updated:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   console.log("[polar-webhook] Status:", data.status);
   // Checkout updated (status changes, etc.)
   // No action needed, wait for subscription.created
 }
 
-async function handleSubscriptionCreated(data: any) {
+async function handleSubscriptionCreated(data: any, environment: string) {
   console.log("[polar-webhook] Subscription created:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
   const customer = data.customer;
@@ -136,7 +165,7 @@ async function handleSubscriptionCreated(data: any) {
       .eq("id", userId);
   }
 
-  // Create/update subscription record
+  // Create/update subscription record with environment tracking
   const { error } = await supabase
     .from("subscriptions")
     .upsert({
@@ -150,7 +179,7 @@ async function handleSubscriptionCreated(data: any) {
       current_period_start: data.current_period_start,
       current_period_end: data.current_period_end,
       store: "polar",
-      environment: "production",
+      environment: environment, // Track sandbox vs production
     }, { onConflict: "user_id" });
 
   if (error) {
@@ -167,11 +196,12 @@ async function handleSubscriptionCreated(data: any) {
     });
   }
 
-  console.log("[polar-webhook] Subscription created for user:", userId);
+  console.log("[polar-webhook] Subscription created for user:", userId, "environment:", environment);
 }
 
-async function handleSubscriptionActive(data: any) {
+async function handleSubscriptionActive(data: any, environment: string) {
   console.log("[polar-webhook] Subscription active:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -189,6 +219,7 @@ async function handleSubscriptionActive(data: any) {
       current_period_start: data.current_period_start,
       current_period_end: data.current_period_end,
       canceled_at: null,
+      environment: environment, // Update environment in case it changed
       updated_at: new Date().toISOString(),
     })
     .eq("polar_subscription_id", data.id);
@@ -211,8 +242,9 @@ async function handleSubscriptionActive(data: any) {
   console.log("[polar-webhook] Subscription activated:", data.id);
 }
 
-async function handleSubscriptionUpdated(data: any) {
+async function handleSubscriptionUpdated(data: any, environment: string) {
   console.log("[polar-webhook] Subscription updated:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -223,6 +255,7 @@ async function handleSubscriptionUpdated(data: any) {
       plan_name: data.product?.name,
       current_period_start: data.current_period_start,
       current_period_end: data.current_period_end,
+      environment: environment,
       updated_at: new Date().toISOString(),
     })
     .eq("polar_subscription_id", data.id);
@@ -234,8 +267,9 @@ async function handleSubscriptionUpdated(data: any) {
   console.log("[polar-webhook] Subscription updated:", data.id);
 }
 
-async function handleSubscriptionCanceled(data: any) {
+async function handleSubscriptionCanceled(data: any, environment: string) {
   console.log("[polar-webhook] Subscription canceled:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -255,8 +289,9 @@ async function handleSubscriptionCanceled(data: any) {
   console.log("[polar-webhook] Subscription canceled:", data.id);
 }
 
-async function handleSubscriptionRevoked(data: any) {
+async function handleSubscriptionRevoked(data: any, environment: string) {
   console.log("[polar-webhook] Subscription revoked:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -275,8 +310,9 @@ async function handleSubscriptionRevoked(data: any) {
   console.log("[polar-webhook] Subscription revoked:", data.id);
 }
 
-async function handleSubscriptionUncanceled(data: any) {
+async function handleSubscriptionUncanceled(data: any, environment: string) {
   console.log("[polar-webhook] Subscription uncanceled:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -296,8 +332,9 @@ async function handleSubscriptionUncanceled(data: any) {
   console.log("[polar-webhook] Subscription uncanceled:", data.id);
 }
 
-async function handleCustomerCreated(data: any) {
+async function handleCustomerCreated(data: any, environment: string) {
   console.log("[polar-webhook] Customer created:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   
   const supabase = getSupabaseAdmin();
 
@@ -315,15 +352,19 @@ async function handleCustomerCreated(data: any) {
   }
 }
 
-async function handleOrderPaid(data: any) {
+async function handleOrderPaid(data: any, environment: string) {
   console.log("[polar-webhook] Order paid:", data.id);
+  console.log("[polar-webhook] Environment:", environment);
   // Order paid events are handled by subscription events for subscriptions
   // This is primarily for one-time purchases which we don't use currently
 }
 
 // Main webhook handler
 Deno.serve(async (req: Request) => {
+  const { mode, webhookSecret } = getPolarConfig();
+  
   console.log("[polar-webhook] Request received:", req.method);
+  console.log("[polar-webhook] Mode:", mode);
   
   // Only accept POST requests
   if (req.method !== "POST") {
@@ -331,9 +372,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const webhookSecret = Deno.env.get("POLAR_WEBHOOK_SECRET");
     if (!webhookSecret) {
-      console.error("[polar-webhook] POLAR_WEBHOOK_SECRET not set");
+      const secretName = mode === "sandbox" ? "POLAR_SANDBOX_WEBHOOK_SECRET" : "POLAR_WEBHOOK_SECRET";
+      console.error(`[polar-webhook] ${secretName} not set`);
       return new Response("Configuration error", { status: 500 });
     }
 
@@ -366,61 +407,61 @@ Deno.serve(async (req: Request) => {
     console.log("[polar-webhook] Event type:", eventType);
     console.log("[polar-webhook] Event data ID:", eventData?.id);
 
-    // Route to appropriate handler
+    // Route to appropriate handler with environment context
     switch (eventType) {
       case "checkout.created":
-        await handleCheckoutCreated(eventData);
+        await handleCheckoutCreated(eventData, mode);
         break;
       case "checkout.updated":
-        await handleCheckoutUpdated(eventData);
+        await handleCheckoutUpdated(eventData, mode);
         break;
       case "subscription.created":
-        await handleSubscriptionCreated(eventData);
+        await handleSubscriptionCreated(eventData, mode);
         break;
       case "subscription.active":
-        await handleSubscriptionActive(eventData);
+        await handleSubscriptionActive(eventData, mode);
         break;
       case "subscription.updated":
-        await handleSubscriptionUpdated(eventData);
+        await handleSubscriptionUpdated(eventData, mode);
         break;
       case "subscription.canceled":
-        await handleSubscriptionCanceled(eventData);
+        await handleSubscriptionCanceled(eventData, mode);
         break;
       case "subscription.revoked":
-        await handleSubscriptionRevoked(eventData);
+        await handleSubscriptionRevoked(eventData, mode);
         break;
       case "subscription.uncanceled":
-        await handleSubscriptionUncanceled(eventData);
+        await handleSubscriptionUncanceled(eventData, mode);
         break;
       case "customer.created":
-        await handleCustomerCreated(eventData);
+        await handleCustomerCreated(eventData, mode);
         break;
       case "customer.updated":
-        console.log("[polar-webhook] Customer updated:", eventData?.id);
+        console.log("[polar-webhook] Customer updated:", eventData?.id, "environment:", mode);
         break;
       case "order.paid":
-        await handleOrderPaid(eventData);
+        await handleOrderPaid(eventData, mode);
         break;
       case "order.created":
-        console.log("[polar-webhook] Order created:", eventData?.id);
+        console.log("[polar-webhook] Order created:", eventData?.id, "environment:", mode);
         break;
       case "product.created":
       case "product.updated":
-        console.log("[polar-webhook] Product event:", eventType, eventData?.id);
+        console.log("[polar-webhook] Product event:", eventType, eventData?.id, "environment:", mode);
         break;
       case "benefit.created":
       case "benefit.updated":
-        console.log("[polar-webhook] Benefit event:", eventType, eventData?.id);
+        console.log("[polar-webhook] Benefit event:", eventType, eventData?.id, "environment:", mode);
         break;
       case "organization.updated":
-        console.log("[polar-webhook] Organization updated:", eventData?.id);
+        console.log("[polar-webhook] Organization updated:", eventData?.id, "environment:", mode);
         break;
       default:
-        console.log("[polar-webhook] Unhandled event type:", eventType);
+        console.log("[polar-webhook] Unhandled event type:", eventType, "environment:", mode);
     }
 
     // Return success
-    return new Response(JSON.stringify({ received: true }), {
+    return new Response(JSON.stringify({ received: true, environment: mode }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

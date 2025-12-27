@@ -10,7 +10,6 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import { ContactProvider } from "@/contexts/ContactContext";
 import { UsageProvider, useUsage } from "@/contexts/UsageContext";
-import { SuperwallProvider } from "@/contexts/SuperwallContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -120,16 +119,14 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
           <UsageProvider>
-            <SuperwallProvider>
-              <DeepLinkHandler>
-                <MeetingProvider>
-                  <ContactProvider>
-                    <StatusBar style="light" />
-                    <RootLayoutNav />
-                  </ContactProvider>
-                </MeetingProvider>
-              </DeepLinkHandler>
-            </SuperwallProvider>
+            <DeepLinkHandler>
+              <MeetingProvider>
+                <ContactProvider>
+                  <StatusBar style="light" />
+                  <RootLayoutNav />
+                </ContactProvider>
+              </MeetingProvider>
+            </DeepLinkHandler>
           </UsageProvider>
         </AuthProvider>
       </GestureHandlerRootView>

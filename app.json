@@ -5,17 +5,17 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "rork-app",
+    "scheme": "legalmemo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/splashlogo.png",
       "resizeMode": "contain",
       "backgroundColor": "#08080e"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.legal-memo",
+      "bundleIdentifier": "app.uselegalmemo.ios",
       "associatedDomains": [
         "applinks:use.legalmemo.app"
       ],
@@ -28,7 +28,8 @@
       },
       "config": {
         "usesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "6G65A4B7Y5"
     },
     "android": {
       "adaptiveIcon": {
@@ -44,7 +45,8 @@
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -55,7 +57,7 @@
       [
         "expo-router",
         {
-          "origin": "https://rork.com/"
+          "origin": "https://use.legalmemo.app/"
         }
       ],
       "expo-font",

@@ -276,6 +276,25 @@ Monetize your app:
 - **Polar.sh** - Web checkout with fast payouts and tax handling - [Developer Docs](https://docs.polar.sh/)
 - This app uses Polar.sh for subscription management via web checkout (opens in Safari)
 
+**Polar Sandbox Testing:**
+
+To test payments without real charges, use Polar's sandbox environment:
+
+1. Create your product at [sandbox.polar.sh](https://sandbox.polar.sh)
+2. Set environment variables:
+   ```bash
+   # In your .env or EAS secrets
+   EXPO_PUBLIC_POLAR_MODE=sandbox
+   EXPO_PUBLIC_POLAR_SANDBOX_PRODUCT_PRICE_ID=price_xxx_from_sandbox
+   ```
+3. Set Supabase Edge Function secrets:
+   ```bash
+   supabase secrets set POLAR_MODE=sandbox
+   supabase secrets set POLAR_SANDBOX_ACCESS_TOKEN=polar_at_xxx
+   supabase secrets set POLAR_SANDBOX_WEBHOOK_SECRET=whsec_xxx
+   ```
+4. Use test card: `4242 4242 4242 4242` (any future date, any CVC)
+
 **Native In-App Purchases (requires Custom Development Build):**
 
 - **Expo In-App Purchases** - Direct App Store/Google Play integration - [Implementation Guide](https://docs.expo.dev/versions/latest/sdk/in-app-purchases/)
