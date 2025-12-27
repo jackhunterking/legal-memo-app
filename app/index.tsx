@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { View, ActivityIndicator, StyleSheet, Dimensions, Image } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useRootNavigationState } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
@@ -9,10 +9,17 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function IndexScreen() {
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const { isAuthenticated, hasCompletedOnboarding, isLoading } = useAuth();
 
   useEffect(() => {
     if (isLoading) return;
+    
+    // Wait for navigation state to be ready before navigating
+    if (!rootNavigationState?.key) {
+      console.log("[Index] Navigation not ready yet, waiting...");
+      return;
+    }
 
     console.log("[Index] Auth state:", { isAuthenticated, hasCompletedOnboarding });
 
@@ -23,7 +30,7 @@ export default function IndexScreen() {
     } else {
       router.replace("/(tabs)/home");
     }
-  }, [isAuthenticated, hasCompletedOnboarding, isLoading, router]);
+  }, [isAuthenticated, hasCompletedOnboarding, isLoading, router, rootNavigationState?.key]);
 
   return (
     <LinearGradient
