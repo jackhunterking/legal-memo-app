@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splashlogo.png",
+      "image": "./assets/images/splash-shield.png",
       "resizeMode": "contain",
       "backgroundColor": "#08080e"
     },
@@ -105,6 +105,14 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": "https://use.legalmemo.app/"
+      },
+      "eas": {
+        "projectId": "e626a04a-733e-442e-a90f-75e94bf745ec"
+      }
     }
   }
 }

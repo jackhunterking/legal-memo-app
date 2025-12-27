@@ -50,6 +50,54 @@ export interface Profile {
 /** Subscription status */
 export type SubscriptionStatus = 'active' | 'canceled' | 'expired' | 'billing_issue' | 'trialing' | 'past_due' | 'incomplete';
 
+// =============================================================================
+// Subscription Status Helpers (Single Source of Truth)
+// =============================================================================
+
+/**
+ * Subscription statuses that grant full access.
+ * - 'active': Paid subscription in good standing
+ * - 'trialing': Polar free trial period (7 days with payment method)
+ */
+export const ACTIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
+  'active',
+  'trialing',
+] as const;
+
+/**
+ * Check if a subscription status grants full access.
+ * Use this function everywhere subscription access is checked.
+ */
+export function isSubscriptionActive(status: SubscriptionStatus | null | undefined): boolean {
+  if (!status) return false;
+  return (ACTIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Subscription statuses indicating billing problems (user should be warned).
+ */
+export const BILLING_ISSUE_STATUSES: readonly SubscriptionStatus[] = [
+  'billing_issue',
+  'past_due',
+  'incomplete',
+] as const;
+
+/**
+ * Check if subscription has billing issues requiring attention.
+ */
+export function hasSubscriptionBillingIssue(status: SubscriptionStatus | null | undefined): boolean {
+  if (!status) return false;
+  return (BILLING_ISSUE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Subscription statuses indicating subscription has ended.
+ */
+export const INACTIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
+  'canceled',
+  'expired',
+] as const;
+
 /** Payment store type (Polar only) */
 export type PaymentStore = 'polar';
 

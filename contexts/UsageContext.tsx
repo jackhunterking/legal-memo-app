@@ -39,6 +39,7 @@ import {
   getTrialDaysRemaining,
   formatTrialStatusMessage,
   SUBSCRIPTION_PLAN,
+  isSubscriptionActive,
 } from '@/types';
 
 export const [UsageProvider, useUsage] = createContextHook(() => {
@@ -264,7 +265,7 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     const canRecordResult = canRecordQuery.data;
     const canAccessResult = canAccessQuery.data;
     
-    const hasActiveSubscription = subscription?.status === 'active';
+    const hasActiveSubscription = isSubscriptionActive(subscription?.status);
     
     // Time-based trial calculations
     const trialStartedAt = canRecordResult?.trial_started_at 
@@ -363,8 +364,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   
   /**
    * Check if user needs to see paywall (trial expired, no subscription)
+   * IMPORTANT: Never show paywall if user has an active subscription
    */
   const shouldShowPaywall = (): boolean => {
+    // Active subscribers should NEVER see paywalls
+    if (usageState.hasActiveSubscription) return false;
+    // Users with active trial should not see paywalls
+    if (usageState.hasActiveTrial) return false;
+    // Only show paywall if trial expired and no subscription
     return usageState.isTrialExpired;
   };
 

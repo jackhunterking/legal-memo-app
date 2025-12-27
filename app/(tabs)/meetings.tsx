@@ -236,7 +236,7 @@ export default function MeetingsScreen() {
   const router = useRouter();
   const { meetings, isLoading, isRefreshing, refetchMeetings, meetingTypes } = useMeetings();
   const { profile } = useAuth();
-  const { canAccessFeatures, isTrialExpired } = useUsage();
+  const { canAccessFeatures, isTrialExpired, hasActiveSubscription, hasActiveTrial } = useUsage();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSyncIndicator, setShowSyncIndicator] = useState(false);
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -245,7 +245,8 @@ export default function MeetingsScreen() {
   const currencySymbol = profile?.currency_symbol || '$';
 
   // Check if meetings should be locked (trial expired, no subscription)
-  const shouldLockMeetings = isTrialExpired && !canAccessFeatures;
+  // Active subscribers should NEVER be locked out
+  const shouldLockMeetings = isTrialExpired && !hasActiveSubscription && !hasActiveTrial;
 
   // Create a map of meeting types by ID for quick lookup
   const meetingTypesMap = useMemo(() => {

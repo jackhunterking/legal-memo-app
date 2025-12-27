@@ -22,7 +22,7 @@ const queryClient = new QueryClient();
  */
 function DeepLinkHandler({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { refreshSubscription } = useUsage();
+  const { refreshSubscription, hasActiveSubscription } = useUsage();
 
   // Handle deep links for checkout success
   const handleDeepLink = useCallback(async (event: { url: string }) => {
@@ -32,18 +32,26 @@ function DeepLinkHandler({ children }: { children: React.ReactNode }) {
     // Check if this is a checkout success redirect
     // URL format: https://legalmemo.app/checkout/success
     if (url.includes('/checkout/success') || url.includes('checkout-success')) {
-      console.log('[DeepLink] Checkout success detected, refreshing subscription...');
+      console.log('[DeepLink] Checkout success detected, waiting for webhook to process...');
+      
+      // Wait a bit for the Polar webhook to process and update the database
+      // This ensures the subscription is active when we refresh
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Refresh subscription data from database
+      console.log('[DeepLink] Refreshing subscription data...');
       await refreshSubscription();
       
-      // Navigate to subscription page to show updated status
-      router.replace('/subscription');
+      // Small delay to let React Query update the state
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Navigate to home - user can start using the app immediately
+      router.replace('/(tabs)/home');
       
       // Show success message
       Alert.alert(
-        'Subscription Activated! 🎉',
-        'Thank you for subscribing! Your Legal Memo Pro subscription is now active.',
+        'Welcome to Pro! 🎉',
+        'Your unlimited access is now active. Start recording meetings with no limits!',
         [{ text: 'Get Started', style: 'default' }]
       );
     }

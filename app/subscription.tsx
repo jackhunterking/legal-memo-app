@@ -26,7 +26,7 @@ import {
   Dimensions,
   Easing,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -107,6 +107,7 @@ export default function SubscriptionScreen() {
     subscription,
     isLoading: usageLoading, 
     refreshUsage,
+    refreshSubscription,
     hasActiveSubscription,
     hasActiveTrial,
     isTrialExpired,
@@ -114,6 +115,15 @@ export default function SubscriptionScreen() {
   } = useUsage();
   
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Refresh subscription data when screen comes into focus
+  // This ensures the UI reflects the latest subscription status after checkout
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[Subscription] Screen focused, refreshing subscription data...');
+      refreshSubscription();
+    }, [refreshSubscription])
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [closeButtonEnabled, setCloseButtonEnabled] = useState(false);
   const [countdown, setCountdown] = useState(CLOSE_BUTTON_DELAY);

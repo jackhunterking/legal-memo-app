@@ -15,7 +15,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Tag, Plus, Pencil, X, Check, Users, DollarSign, CreditCard, Zap, Clock, AlertTriangle } from "lucide-react-native";
+import { LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Tag, Plus, Pencil, X, Check, Users, DollarSign, CreditCard, Zap, Clock, AlertTriangle, ExternalLink, Crown } from "lucide-react-native";
+import * as Linking from "expo-linking";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMeetings } from "@/contexts/MeetingContext";
@@ -443,6 +444,7 @@ export default function SettingsScreen() {
 
   const {
     usageState,
+    subscription,
     hasActiveSubscription,
     hasActiveTrial,
     isTrialExpired,
@@ -471,6 +473,9 @@ export default function SettingsScreen() {
   const [hourlyRateInput, setHourlyRateInput] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('$');
   const [isSavingBilling, setIsSavingBilling] = useState(false);
+
+  // Subscription management state
+  const [isManagingSubscription, setIsManagingSubscription] = useState(false);
 
   // Initialize billing values from profile
   useEffect(() => {
@@ -677,6 +682,67 @@ export default function SettingsScreen() {
     }
   };
 
+  // Supabase URL for Edge Functions
+  const SUPABASE_URL = "https://jaepslscnnjtowwkiudu.supabase.co";
+
+  /**
+   * Open Polar customer portal for subscription management
+   */
+  const handleManageSubscription = async () => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    setIsManagingSubscription(true);
+
+    try {
+      console.log('[Settings] Opening customer portal...');
+      
+      const polarCustomerId = subscription?.polar_customer_id;
+      
+      if (!polarCustomerId) {
+        // Try fetching from profile if not in subscription
+        const { data: profileData } = await import("@/lib/supabase").then(m => 
+          m.supabase.from('profiles').select('polar_customer_id').eq('id', user?.id).single()
+        );
+          
+        if (!profileData?.polar_customer_id) {
+          throw new Error('No subscription found');
+        }
+        
+        const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(profileData.polar_customer_id)}`;
+        const canOpen = await Linking.canOpenURL(portalUrl);
+        if (canOpen) {
+          await Linking.openURL(portalUrl);
+        }
+        return;
+      }
+
+      const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(polarCustomerId)}`;
+      console.log('[Settings] Opening portal URL:', portalUrl);
+      
+      const canOpen = await Linking.canOpenURL(portalUrl);
+      if (canOpen) {
+        await Linking.openURL(portalUrl);
+      } else {
+        Alert.alert(
+          "Manage Subscription",
+          "Unable to open subscription management. Please try again later.",
+          [{ text: "OK", style: "default" }]
+        );
+      }
+    } catch (error) {
+      console.error('[Settings] Error opening portal:', error);
+      Alert.alert(
+        "Error",
+        error instanceof Error ? error.message : "Unable to open subscription management. Please try again.",
+        [{ text: "OK", style: "default" }]
+      );
+    } finally {
+      setIsManagingSubscription(false);
+    }
+  };
+
   const handleSignOut = async () => {
     const performSignOut = async () => {
       try {
@@ -854,50 +920,94 @@ export default function SettingsScreen() {
 
         <Text style={styles.sectionTitle}>Subscription & Usage</Text>
         <View style={styles.section}>
-          <Pressable
-            style={[styles.settingRow, styles.pressableRow]}
-            onPress={() => router.push("/subscription")}
-          >
-            <View style={styles.settingLeft}>
-              {hasActiveSubscription ? (
-                <Zap size={20} color={Colors.accent} />
-              ) : isTrialExpired ? (
-                <AlertTriangle size={20} color={Colors.error} />
-              ) : hasActiveTrial ? (
-                <Clock size={20} color={trialDaysRemaining <= 2 ? Colors.warning : Colors.accent} />
-              ) : (
-                <CreditCard size={20} color={Colors.textMuted} />
-              )}
-              <View style={styles.billingInfo}>
-                <Text style={styles.settingLabel}>
-                  {hasActiveSubscription 
-                    ? "Pro Subscription" 
-                    : isTrialExpired 
+          {/* Subscription Status Row - Different UI for subscribers vs non-subscribers */}
+          {hasActiveSubscription ? (
+            // Active subscriber view - show PRO badge and status
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <View style={styles.proBadgeContainer}>
+                  <Crown size={16} color="#FFD700" />
+                </View>
+                <View style={styles.billingInfo}>
+                  <View style={styles.subscriptionTitleRow}>
+                    <Text style={styles.settingLabel}>Pro Subscription</Text>
+                    <View style={styles.proBadge}>
+                      <Text style={styles.proBadgeText}>PRO</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.billingHint, { color: Colors.success }]}>
+                    Unlimited Access Active
+                  </Text>
+                </View>
+              </View>
+              <Zap size={20} color={Colors.success} />
+            </View>
+          ) : (
+            // Non-subscriber view - show trial status or subscribe prompt
+            <Pressable
+              style={[styles.settingRow, styles.pressableRow]}
+              onPress={() => router.push("/subscription")}
+            >
+              <View style={styles.settingLeft}>
+                {isTrialExpired ? (
+                  <AlertTriangle size={20} color={Colors.error} />
+                ) : hasActiveTrial ? (
+                  <Clock size={20} color={trialDaysRemaining <= 2 ? Colors.warning : Colors.accent} />
+                ) : (
+                  <CreditCard size={20} color={Colors.textMuted} />
+                )}
+                <View style={styles.billingInfo}>
+                  <Text style={styles.settingLabel}>
+                    {isTrialExpired 
                       ? "Trial Expired" 
                       : hasActiveTrial 
                         ? "Free Trial" 
                         : "No Subscription"}
-                </Text>
-                <Text style={[
-                  styles.billingHint,
-                  hasActiveSubscription && { color: Colors.success },
-                  hasActiveTrial && !isTrialExpired && { color: trialDaysRemaining <= 2 ? Colors.warning : Colors.accent },
-                  isTrialExpired && { color: Colors.error },
-                ]}>
-                  {hasActiveSubscription 
-                    ? 'Unlimited Access'
-                    : isTrialExpired 
+                  </Text>
+                  <Text style={[
+                    styles.billingHint,
+                    hasActiveTrial && !isTrialExpired && { color: trialDaysRemaining <= 2 ? Colors.warning : Colors.accent },
+                    isTrialExpired && { color: Colors.error },
+                  ]}>
+                    {isTrialExpired 
                       ? 'Subscribe to continue'
                       : trialDaysRemaining === 0
                         ? 'Trial ends today!'
                         : trialDaysRemaining === 1
                           ? 'Trial ends tomorrow!'
                           : `${trialDaysRemaining} days left in trial`}
-                </Text>
+                  </Text>
+                </View>
               </View>
-            </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
-          </Pressable>
+              <ChevronRight size={20} color={Colors.textMuted} />
+            </Pressable>
+          )}
+
+          {/* Manage Subscription Button - Only for active subscribers */}
+          {hasActiveSubscription && (
+            <Pressable
+              style={[styles.settingRow, styles.pressableRow]}
+              onPress={handleManageSubscription}
+              disabled={isManagingSubscription}
+            >
+              <View style={styles.settingLeft}>
+                <CreditCard size={20} color={Colors.accent} />
+                <View style={styles.billingInfo}>
+                  <Text style={styles.settingLabel}>Manage Subscription</Text>
+                  <Text style={styles.billingHint}>
+                    {subscription?.current_period_end 
+                      ? `Renews ${new Date(subscription.current_period_end).toLocaleDateString()}`
+                      : 'Billing, cancel, update payment'}
+                  </Text>
+                </View>
+              </View>
+              {isManagingSubscription ? (
+                <ActivityIndicator size="small" color={Colors.accent} />
+              ) : (
+                <ExternalLink size={18} color={Colors.textMuted} />
+              )}
+            </Pressable>
+          )}
           
           {/* Usage Stats Mini Display */}
           {!isUsageLoading && (
@@ -910,12 +1020,12 @@ export default function SettingsScreen() {
                 <>
                   <View style={styles.usageStatDivider} />
                   <View style={styles.usageStat}>
-                    <Text style={styles.usageStatValue}>∞</Text>
+                    <Text style={[styles.usageStatValue, { color: Colors.success }]}>∞</Text>
                     <Text style={styles.usageStatLabel}>Unlimited</Text>
                   </View>
                 </>
               )}
-              {hasActiveTrial && !isTrialExpired && (
+              {hasActiveTrial && !isTrialExpired && !hasActiveSubscription && (
                 <>
                   <View style={styles.usageStatDivider} />
                   <View style={styles.usageStat}>
@@ -1335,6 +1445,32 @@ const styles = StyleSheet.create({
     width: 1,
     height: 30,
     backgroundColor: Colors.border,
+  },
+  // PRO subscriber styles
+  proBadgeContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 215, 0, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  subscriptionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  proBadge: {
+    backgroundColor: "rgba(255, 215, 0, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  proBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#FFD700",
+    letterSpacing: 0.5,
   },
   featureSection: {
     backgroundColor: Colors.surface,

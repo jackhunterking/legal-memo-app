@@ -199,7 +199,7 @@ Polar subscription tracking.
 | user_id | uuid | Reference to auth.users (unique) |
 | polar_subscription_id | text | Polar subscription ID |
 | polar_customer_id | text | Polar customer ID |
-| status | text | Status: active, canceled, expired, billing_issue, trialing, past_due, incomplete |
+| status | text | Status: active, canceled, expired, billing_issue, trialing, past_due, incomplete. **Active statuses (grant access): active, trialing** |
 | plan_name | text | Plan name |
 | monthly_minutes_included | integer | Minutes included (999999 = unlimited) |
 | overage_rate_cents | integer | Overage rate in cents |
@@ -247,6 +247,8 @@ Audit log of all usage events.
 ### `can_user_record(p_user_id UUID)`
 Checks if user can record a new meeting.
 
+**Active subscription statuses**: `active`, `trialing` (both grant full access)
+
 Returns JSON with:
 - `can_record`: boolean
 - `has_active_trial`: boolean
@@ -260,6 +262,8 @@ Returns JSON with:
 ### `can_access_features(p_user_id UUID)`
 Checks if user can access premium features (meeting details, playback, etc.).
 
+**Active subscription statuses**: `active`, `trialing` (both grant full access)
+
 Returns same structure as `can_user_record`.
 
 ### `record_usage(p_user_id, p_meeting_id, p_minutes, p_is_free_trial, p_polar_event_id)`
@@ -270,6 +274,52 @@ Resets usage counter for new billing period.
 
 ### `increment_share_view_count(p_share_token)`
 Increments view count for shared meetings.
+
+---
+
+## Troubleshooting: Subscription Status Issues
+
+### Problem: Users with `trialing` status see paywalls
+
+**Symptoms:**
+- User subscribes via Polar sandbox/production
+- Subscription status is `trialing` (7-day free trial period)
+- User still sees paywalls and cannot access features
+- Database shows subscription exists but `has_subscription` returns false
+
+**Root Cause:**
+The subscription status check only recognized `'active'` status, but Polar sends `'trialing'` for subscriptions in their free trial period.
+
+**Solution (Fixed Dec 27, 2025):**
+1. **Database Functions** (`can_user_record`, `can_access_features`):
+   - Updated to check for both `'active'` AND `'trialing'` statuses
+   - Migration: `017_subscription_status_helpers.sql`
+   - Uses array: `v_active_statuses TEXT[] := ARRAY['active', 'trialing']`
+
+2. **Frontend** (`contexts/UsageContext.tsx`):
+   - Uses `isSubscriptionActive()` helper from `types/index.ts`
+   - Helper checks: `ACTIVE_SUBSCRIPTION_STATUSES = ['active', 'trialing']`
+
+3. **Webhook** (`supabase/functions/polar-webhook/index.ts`):
+   - Must be deployed with `--no-verify-jwt` flag
+   - Command: `supabase functions deploy polar-webhook --no-verify-jwt`
+   - Without this flag, Polar webhooks return 401 "Missing authorization header"
+
+**Verification:**
+```sql
+-- Check subscription status
+SELECT status, user_id FROM subscriptions WHERE user_id = 'USER_ID';
+
+-- Test access function
+SELECT can_user_record('USER_ID');
+-- Should return: has_subscription: true, subscription_status: "trialing"
+```
+
+**If issue recurs:**
+1. Check database functions are updated (run migration 017)
+2. Verify frontend uses `isSubscriptionActive()` helper
+3. Ensure webhook deployed with `--no-verify-jwt`
+4. Check Polar webhook deliveries in dashboard (should be 200, not 401/502)
 
 ---
 

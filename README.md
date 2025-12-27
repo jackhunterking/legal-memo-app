@@ -328,6 +328,47 @@ For mobile apps, you'll configure your app's deep linking scheme in `app.json`.
 2. Delete `node_modules` and reinstall: `rm -rf node_modules && bun install`
 3. Check [Expo's troubleshooting guide](https://docs.expo.dev/troubleshooting/build-errors/)
 
+### **Login not persisting after app restart?**
+
+**Current Implementation:**
+- Session persistence is **already enabled** via Supabase client configuration
+- Uses `SecureStore` on iOS/Android (encrypted storage)
+- Uses `localStorage` on web
+- Auto-refresh token enabled (`autoRefreshToken: true`)
+- Session restored on app startup via `getSession()`
+
+**To Test Login Persistence:**
+
+1. **Development Build (Recommended for testing):**
+   ```bash
+   # Create a development build
+   eas build --profile development --platform ios
+   # or
+   eas build --profile development --platform android
+   
+   # Install on device and test:
+   # 1. Sign in
+   # 2. Close app completely (swipe away)
+   # 3. Reopen app
+   # 4. Should remain logged in
+   ```
+
+2. **Expo Go (Limited):**
+   - Login persistence works but may be less reliable
+   - Test: Sign in → Close Expo Go → Reopen → Should stay logged in
+   - Note: Expo Go clears data more aggressively than production builds
+
+3. **Production Build:**
+   - Full persistence support
+   - Test with: `eas build --platform ios` or `eas build --platform android`
+
+**If login doesn't persist:**
+1. Check `lib/supabase.ts` has `persistSession: true` and `autoRefreshToken: true`
+2. Verify `contexts/AuthContext.tsx` calls `getSession()` on mount
+3. Check device storage permissions (iOS: Settings → Privacy → Files and Folders)
+4. For web: Check browser console for localStorage errors
+5. Clear app data and try again: Settings → App → Clear Data (Android) or Delete & Reinstall (iOS)
+
 ### **Need help with native features?**
 
 - Check [Expo's documentation](https://docs.expo.dev/) for native APIs
