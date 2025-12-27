@@ -13,10 +13,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, Clock, AlertCircle, CheckCircle, Loader, DollarSign } from "lucide-react-native";
+import { Search, Clock, AlertCircle, CheckCircle, Loader, DollarSign, Lock } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUsage } from "@/contexts/UsageContext";
 import type { MeetingWithContact, MeetingStatus, MeetingType } from "@/types";
 import { getStatusInfo, formatDuration, formatCurrency } from "@/types";
 import Colors from "@/constants/colors";
@@ -104,8 +105,11 @@ const SyncIndicator = ({ visible }: { visible: boolean }) => {
 };
 
 // Status indicator component
-const StatusIndicator = ({ status }: { status: MeetingStatus }) => {
-  const statusInfo = getStatusInfo(status);
+const StatusIndicator = ({ status, isLocked }: { status: MeetingStatus; isLocked?: boolean }) => {
+  // Show lock icon if content is locked
+  if (isLocked) {
+    return <Lock size={16} color={Colors.warning} />;
+  }
   
   if (status === 'ready') {
     return <CheckCircle size={16} color={Colors.success} />;
@@ -122,11 +126,13 @@ const MeetingCard = ({
   onPress,
   meetingType,
   currencySymbol = '$',
+  isLocked = false,
 }: { 
   meeting: MeetingWithContact; 
   onPress: () => void;
   meetingType?: MeetingType;
   currencySymbol?: string;
+  isLocked?: boolean;
 }) => {
   const date = new Date(meeting.created_at);
   const statusInfo = getStatusInfo(meeting.status);
@@ -140,13 +146,16 @@ const MeetingCard = ({
   const contactCategory = meeting.contact?.category;
 
   return (
-    <Pressable style={styles.card} onPress={onPress}>
+    <Pressable 
+      style={[styles.card, isLocked && styles.cardLocked]} 
+      onPress={onPress}
+    >
       <View style={styles.cardHeader}>
         <View style={styles.cardTitleRow}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
+          <Text style={[styles.cardTitle, isLocked && styles.cardTitleLocked]} numberOfLines={1}>
             {meeting.title}
           </Text>
-          <StatusIndicator status={meeting.status} />
+          <StatusIndicator status={meeting.status} isLocked={isLocked} />
         </View>
       </View>
       
@@ -163,8 +172,16 @@ const MeetingCard = ({
       </View>
       
       <View style={styles.cardFooter}>
+        {/* Locked Badge - show when trial expired */}
+        {isLocked && (
+          <View style={styles.lockedBadge}>
+            <Lock size={10} color={Colors.warning} />
+            <Text style={styles.lockedText}>Locked</Text>
+          </View>
+        )}
+        
         {/* Billable Badge - show amount if billable */}
-        {meeting.is_billable && meeting.billable_amount && (
+        {!isLocked && meeting.is_billable && meeting.billable_amount && (
           <View style={styles.billableBadge}>
             <DollarSign size={10} color={Colors.success} />
             <Text style={styles.billableText}>
@@ -202,8 +219,8 @@ const MeetingCard = ({
           </View>
         )}
         
-        {/* Status Badge - only show when not ready */}
-        {meeting.status !== 'ready' && (
+        {/* Status Badge - only show when not ready and not locked */}
+        {!isLocked && meeting.status !== 'ready' && (
           <View style={[styles.statusBadge, { backgroundColor: `${statusInfo.color}20` }]}>
             <Text style={[styles.statusText, { color: statusInfo.color }]}>
               {statusInfo.label}
@@ -219,12 +236,16 @@ export default function MeetingsScreen() {
   const router = useRouter();
   const { meetings, isLoading, isRefreshing, refetchMeetings, meetingTypes } = useMeetings();
   const { profile } = useAuth();
+  const { canAccessFeatures, isTrialExpired } = useUsage();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSyncIndicator, setShowSyncIndicator] = useState(false);
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Currency symbol from user profile
   const currencySymbol = profile?.currency_symbol || '$';
+
+  // Check if meetings should be locked (trial expired, no subscription)
+  const shouldLockMeetings = isTrialExpired && !canAccessFeatures;
 
   // Create a map of meeting types by ID for quick lookup
   const meetingTypesMap = useMemo(() => {
@@ -266,6 +287,13 @@ export default function MeetingsScreen() {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+    
+    // If trial expired and no subscription, navigate to subscription page
+    if (shouldLockMeetings) {
+      router.push("/subscription");
+      return;
+    }
+    
     router.push(`/meeting/${meeting.id}`);
   };
 
@@ -312,6 +340,7 @@ export default function MeetingsScreen() {
             onPress={() => handleMeetingPress(item)}
             meetingType={item.meeting_type_id ? meetingTypesMap.get(item.meeting_type_id) : undefined}
             currencySymbol={currencySymbol}
+            isLocked={shouldLockMeetings}
           />
         )}
         contentContainerStyle={styles.list}
@@ -424,6 +453,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  cardLocked: {
+    opacity: 0.85,
+    borderColor: `${Colors.warning}40`,
+  },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -443,6 +476,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: Colors.text,
     letterSpacing: -0.2,
+  },
+  cardTitleLocked: {
+    color: Colors.textSecondary,
   },
   cardMeta: {
     flexDirection: "row",
@@ -468,6 +504,20 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginTop: 10,
+  },
+  lockedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: `${Colors.warning}20`,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  lockedText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.warning,
   },
   billableBadge: {
     flexDirection: "row",

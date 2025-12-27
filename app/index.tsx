@@ -1,8 +1,11 @@
 import { useEffect } from "react";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { View, ActivityIndicator, StyleSheet, Dimensions, Image } from "react-native";
 import { useRouter } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function IndexScreen() {
   const router = useRouter();
@@ -23,9 +26,21 @@ export default function IndexScreen() {
   }, [isAuthenticated, hasCompletedOnboarding, isLoading, router]);
 
   return (
-    <View style={styles.container}>
-      <ActivityIndicator size="large" color={Colors.accentLight} />
-    </View>
+    <LinearGradient
+      colors={["#061f18", "#051a14", "#08080e"]}
+      style={styles.container}
+      start={{ x: 0.5, y: 0 }}
+      end={{ x: 0.5, y: 1 }}
+    >
+      <View style={styles.logoContainer}>
+        <Image
+          source={require("@/assets/images/icon.png")}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+      </View>
+      <ActivityIndicator size="large" color={Colors.accentLight} style={styles.loader} />
+    </LinearGradient>
   );
 }
 
@@ -34,6 +49,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: Colors.background,
+  },
+  logoContainer: {
+    width: SCREEN_WIDTH * 0.6, // 60% of screen width (20% margin on each side)
+    aspectRatio: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logo: {
+    width: "100%",
+    height: "100%",
+  },
+  loader: {
+    marginTop: 40,
   },
 });

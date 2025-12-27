@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Linking from "expo-linking";
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useState } from "react";
 import { Alert } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import { ContactProvider } from "@/contexts/ContactContext";
 import { UsageProvider, useUsage } from "@/contexts/UsageContext";
+import { SuperwallProvider } from "@/contexts/SuperwallContext";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -70,6 +71,20 @@ function DeepLinkHandler({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayoutNav() {
+  const { isLoading: authLoading } = useAuth();
+  const { isLoading: usageLoading } = useUsage();
+  const [isAppReady, setIsAppReady] = useState(false);
+
+  // Wait for critical contexts to load before hiding splash screen
+  // This prevents the "first click doesn't work" issue
+  useEffect(() => {
+    if (!authLoading && !usageLoading && !isAppReady) {
+      console.log('[RootLayout] App ready, hiding splash screen');
+      SplashScreen.hideAsync();
+      setIsAppReady(true);
+    }
+  }, [authLoading, usageLoading, isAppReady]);
+
   return (
     <Stack
       screenOptions={{
@@ -97,23 +112,24 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
-  useEffect(() => {
-    SplashScreen.hideAsync();
-  }, []);
+  // Splash screen hiding is now handled in RootLayoutNav
+  // after contexts are loaded, preventing the "first click doesn't work" issue
 
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
           <UsageProvider>
-            <DeepLinkHandler>
-              <MeetingProvider>
-                <ContactProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
-                </ContactProvider>
-              </MeetingProvider>
-            </DeepLinkHandler>
+            <SuperwallProvider>
+              <DeepLinkHandler>
+                <MeetingProvider>
+                  <ContactProvider>
+                    <StatusBar style="light" />
+                    <RootLayoutNav />
+                  </ContactProvider>
+                </MeetingProvider>
+              </DeepLinkHandler>
+            </SuperwallProvider>
           </UsageProvider>
         </AuthProvider>
       </GestureHandlerRootView>

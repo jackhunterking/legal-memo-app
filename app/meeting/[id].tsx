@@ -60,6 +60,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useMeetingDetails, useMeetings, useMeetingShares } from "@/contexts/MeetingContext";
 import { useContacts } from "@/contexts/ContactContext";
+import { useUsage } from "@/contexts/UsageContext";
 import Colors from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { 
@@ -1297,6 +1298,10 @@ export default function MeetingDetailScreen() {
   } = useMeetings();
   const { contacts } = useContacts();
   const { profile } = useAuth();
+  const { canAccessFeatures, isTrialExpired, hasActiveSubscription, hasActiveTrial } = useUsage();
+  
+  // Check if content is locked - trial expired and no subscription
+  const isContentLocked = isTrialExpired && !hasActiveSubscription && !hasActiveTrial;
   
   // Fetch existing share links
   const { data: shares = [], isLoading: isLoadingShares, refetch: refetchShares } = useMeetingShares(id || null);
@@ -1711,6 +1716,60 @@ export default function MeetingDetailScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.accentLight} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Content locked state - show paywall instead of details
+  if (isContentLocked) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        
+        {/* Header */}
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <ChevronLeft size={24} color={Colors.text} />
+          </Pressable>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {meeting.title}
+          </Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        {/* Locked Content View */}
+        <View style={styles.lockedContainer}>
+          <View style={styles.lockedIconContainer}>
+            <Lock size={48} color={Colors.warning} />
+          </View>
+          <Text style={styles.lockedTitle}>Meeting Locked</Text>
+          <Text style={styles.lockedDescription}>
+            Your free trial has ended. Subscribe to access your meeting transcripts, summaries, and audio recordings.
+          </Text>
+          
+          {/* Basic info still visible */}
+          <View style={styles.lockedInfoCard}>
+            <View style={styles.lockedInfoRow}>
+              <Text style={styles.lockedInfoLabel}>Date</Text>
+              <Text style={styles.lockedInfoValue}>
+                {new Date(meeting.created_at).toLocaleDateString()}
+              </Text>
+            </View>
+            <View style={styles.lockedInfoRow}>
+              <Text style={styles.lockedInfoLabel}>Duration</Text>
+              <Text style={styles.lockedInfoValue}>
+                {formatDuration(meeting.duration_seconds)}
+              </Text>
+            </View>
+          </View>
+
+          <Pressable
+            style={styles.lockedSubscribeButton}
+            onPress={() => router.push("/subscription")}
+          >
+            <Text style={styles.lockedSubscribeButtonText}>Subscribe to Unlock</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -2167,6 +2226,71 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  // Locked content styles
+  lockedContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  lockedIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: `${Colors.warning}20`,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 24,
+  },
+  lockedTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  lockedDescription: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 32,
+  },
+  lockedInfoCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 20,
+    width: "100%",
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  lockedInfoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  lockedInfoLabel: {
+    fontSize: 14,
+    color: Colors.textMuted,
+  },
+  lockedInfoValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.text,
+  },
+  lockedSubscribeButton: {
+    backgroundColor: Colors.accent,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+    width: "100%",
+  },
+  lockedSubscribeButtonText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#000",
+    textAlign: "center",
   },
   header: {
     flexDirection: "row",

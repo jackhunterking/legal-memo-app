@@ -37,6 +37,9 @@ export interface Profile {
   currency_symbol: string;
   // Payment integration (Polar)
   polar_customer_id: string | null;
+  // Time-based trial (7 days from signup)
+  trial_started_at: string | null;
+  // Legacy fields (kept for backward compatibility)
   has_free_trial: boolean;
   free_trial_minutes_remaining: number;
   created_at: string;
@@ -102,14 +105,28 @@ export interface UsageTransaction {
   created_at: string;
 }
 
-/** Result from can_user_record database function */
+/** Result from can_user_record database function (time-based trial) */
 export interface CanRecordResult {
   can_record: boolean;
-  has_free_trial: boolean;
-  free_trial_remaining: number;
+  has_active_trial: boolean;
+  trial_started_at: string | null;
+  trial_expires_at: string | null;
+  trial_days_remaining: number;
   has_subscription: boolean;
   subscription_status: SubscriptionStatus | null;
-  reason: 'active_subscription' | 'free_trial' | 'no_credits';
+  reason: 'active_subscription' | 'active_trial' | 'trial_expired';
+}
+
+/** Result from can_access_features database function */
+export interface CanAccessResult {
+  can_access: boolean;
+  has_active_trial: boolean;
+  trial_started_at: string | null;
+  trial_expires_at: string | null;
+  trial_days_remaining: number;
+  has_subscription: boolean;
+  subscription_status: SubscriptionStatus | null;
+  reason: 'active_subscription' | 'active_trial' | 'trial_expired';
 }
 
 /** User's current usage state */
@@ -118,31 +135,25 @@ export interface UsageState {
   hasActiveSubscription: boolean;
   subscription: Subscription | null;
   
-  // Free trial info
-  isInFreeTrial: boolean;
-  freeTrialMinutesRemaining: number;
-  
-  // Current period usage
-  minutesUsedThisPeriod: number;
-  minutesIncluded: number;
-  minutesRemaining: number;
-  
-  // Overage info
-  overageMinutes: number;
-  overageRateCents: number;
-  estimatedOverageCharge: number;
+  // Time-based trial info (7-day free trial)
+  hasActiveTrial: boolean;
+  trialStartedAt: Date | null;
+  trialExpiresAt: Date | null;
+  trialDaysRemaining: number;
+  isTrialExpired: boolean;
   
   // Lifetime stats
   lifetimeMinutesUsed: number;
   
-  // Period dates
+  // Subscription period dates (for subscribers)
   periodStart: Date | null;
   periodEnd: Date | null;
   daysRemainingInPeriod: number;
   
-  // Can record check
+  // Access checks
   canRecord: boolean;
-  canRecordReason: 'active_subscription' | 'free_trial' | 'no_credits';
+  canAccessFeatures: boolean;
+  accessReason: 'active_subscription' | 'active_trial' | 'trial_expired';
 }
 
 /** Subscription plan constants */
@@ -160,6 +171,76 @@ export const SUBSCRIPTION_PLAN = {
     'Secure cloud storage',
   ],
 } as const;
+
+// =============================================================================
+// Trial Helper Functions
+// =============================================================================
+
+/**
+ * Calculate trial expiration date from start date
+ * @param trialStartedAt - When the trial started (ISO string or Date)
+ * @returns Trial expiration date
+ */
+export function getTrialExpirationDate(trialStartedAt: string | Date | null): Date | null {
+  if (!trialStartedAt) return null;
+  const startDate = new Date(trialStartedAt);
+  const expirationDate = new Date(startDate);
+  expirationDate.setDate(expirationDate.getDate() + SUBSCRIPTION_PLAN.freeTrialDays);
+  return expirationDate;
+}
+
+/**
+ * Check if trial is currently active
+ * @param trialStartedAt - When the trial started
+ * @returns True if trial is still active
+ */
+export function isTrialActive(trialStartedAt: string | Date | null): boolean {
+  const expirationDate = getTrialExpirationDate(trialStartedAt);
+  if (!expirationDate) return false;
+  return expirationDate > new Date();
+}
+
+/**
+ * Get days remaining in trial
+ * @param trialStartedAt - When the trial started
+ * @returns Number of days remaining (0 if expired)
+ */
+export function getTrialDaysRemaining(trialStartedAt: string | Date | null): number {
+  const expirationDate = getTrialExpirationDate(trialStartedAt);
+  if (!expirationDate) return 0;
+  
+  const now = new Date();
+  const diffMs = expirationDate.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
+/**
+ * Format trial status message for display
+ * @param trialStartedAt - When the trial started
+ * @param hasSubscription - Whether user has active subscription
+ * @returns User-friendly status message
+ */
+export function formatTrialStatusMessage(
+  trialStartedAt: string | Date | null,
+  hasSubscription: boolean
+): string {
+  if (hasSubscription) {
+    return 'Unlimited Access';
+  }
+  
+  const daysRemaining = getTrialDaysRemaining(trialStartedAt);
+  
+  if (daysRemaining === 0) {
+    return 'Trial expired - Subscribe to continue';
+  }
+  
+  if (daysRemaining === 1) {
+    return 'Trial ends tomorrow';
+  }
+  
+  return `${daysRemaining} days left in trial`;
+}
 
 /** 
  * Calculate overage charge in dollars 

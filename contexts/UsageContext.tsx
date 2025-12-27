@@ -1,18 +1,26 @@
 /**
  * UsageContext
  * 
- * Manages subscription status and usage tracking for Polar billing.
+ * Manages subscription status and time-based trial tracking for Polar billing.
  * Uses @polar-sh/supabase SDK for payment integration.
  * 
+ * Business Model:
+ * - 7-day free trial with UNLIMITED usage during trial period
+ * - After trial: $97/month for unlimited access
+ * - Paywalls appear when trial expires and no subscription
+ * 
  * Provides hooks to:
- * - Check if user can record (has credits/subscription)
- * - Get current usage stats
+ * - Check if user can record (has active trial OR subscription)
+ * - Check if user can access features (meetings, audio, etc.)
+ * - Get trial status and countdown
  * - Get subscription details from Supabase
  * - Refresh usage after recording
  * - Refresh subscription after Polar checkout success
  */
 
 import createContextHook from '@nkzw/create-context-hook';
+import { useEffect, useRef } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
@@ -22,16 +30,53 @@ import type {
   UsageTransaction, 
   UsageState, 
   CanRecordResult,
-  SUBSCRIPTION_PLAN,
+  CanAccessResult,
 } from '@/types';
 import { 
-  calculateOverageCharge, 
   getDaysRemainingInPeriod,
+  getTrialExpirationDate,
+  isTrialActive,
+  getTrialDaysRemaining,
+  formatTrialStatusMessage,
+  SUBSCRIPTION_PLAN,
 } from '@/types';
 
 export const [UsageProvider, useUsage] = createContextHook(() => {
+  // useRef must be called first to maintain consistent hook order
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  
   const { user, profile } = useAuth();
   const queryClient = useQueryClient();
+
+  // ============================================
+  // APP STATE LISTENER - Refresh data when app comes to foreground
+  // ============================================
+  
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      // When app comes back from background to active, refresh usage data
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active' &&
+        user?.id
+      ) {
+        console.log('[UsageContext] App became active, refreshing usage data...');
+        // Invalidate and refetch all usage-related queries
+        queryClient.invalidateQueries({ queryKey: ['subscription', user.id] });
+        queryClient.invalidateQueries({ queryKey: ['usageCredits', user.id] });
+        queryClient.invalidateQueries({ queryKey: ['canRecord', user.id] });
+        queryClient.invalidateQueries({ queryKey: ['canAccess', user.id] });
+        queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [user?.id, queryClient]);
 
   // ============================================
   // SUBSCRIPTION QUERY
@@ -68,7 +113,7 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   });
 
   // ============================================
-  // USAGE CREDITS QUERY
+  // USAGE CREDITS QUERY (for lifetime stats)
   // ============================================
   
   const usageCreditsQuery = useQuery({
@@ -92,7 +137,7 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
         return null;
       }
       
-      console.log('[UsageContext] Usage credits:', data.minutes_used_this_period);
+      console.log('[UsageContext] Usage credits:', data.lifetime_minutes_used);
       return data;
     },
     enabled: !!user?.id,
@@ -100,13 +145,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
 
   // ============================================
   // CAN RECORD CHECK (using database function)
+  // Now uses time-based trial instead of minutes
   // ============================================
   
   const canRecordQuery = useQuery({
     queryKey: ['canRecord', user?.id],
     queryFn: async (): Promise<CanRecordResult | null> => {
       if (!user?.id) return null;
-      console.log('[UsageContext] Checking if user can record...');
+      console.log('[UsageContext] Checking if user can record (time-based trial)...');
       
       const { data, error } = await supabase.rpc('can_user_record', {
         p_user_id: user.id,
@@ -114,14 +160,21 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
       
       if (error) {
         console.error('[UsageContext] Error checking can_record:', error.message);
-        // Default to allowing recording if check fails (to not block users)
+        // Default to allowing if check fails - calculate from profile
+        const trialStartedAt = profile?.trial_started_at || profile?.created_at;
+        const trialActive = isTrialActive(trialStartedAt);
+        const daysRemaining = getTrialDaysRemaining(trialStartedAt);
+        const expiresAt = getTrialExpirationDate(trialStartedAt);
+        
         return {
-          can_record: true,
-          has_free_trial: true,
-          free_trial_remaining: 15,
+          can_record: trialActive,
+          has_active_trial: trialActive,
+          trial_started_at: trialStartedAt || null,
+          trial_expires_at: expiresAt?.toISOString() || null,
+          trial_days_remaining: daysRemaining,
           has_subscription: false,
           subscription_status: null,
-          reason: 'free_trial',
+          reason: trialActive ? 'active_trial' : 'trial_expired',
         };
       }
       
@@ -131,6 +184,48 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     enabled: !!user?.id,
     // Refresh frequently to stay up to date
     staleTime: 30000, // Consider stale after 30 seconds
+  });
+
+  // ============================================
+  // CAN ACCESS FEATURES CHECK
+  // Used for meeting details, audio playback, etc.
+  // ============================================
+  
+  const canAccessQuery = useQuery({
+    queryKey: ['canAccess', user?.id],
+    queryFn: async (): Promise<CanAccessResult | null> => {
+      if (!user?.id) return null;
+      console.log('[UsageContext] Checking if user can access features...');
+      
+      const { data, error } = await supabase.rpc('can_access_features', {
+        p_user_id: user.id,
+      });
+      
+      if (error) {
+        console.error('[UsageContext] Error checking can_access:', error.message);
+        // Default - calculate from profile
+        const trialStartedAt = profile?.trial_started_at || profile?.created_at;
+        const trialActive = isTrialActive(trialStartedAt);
+        const daysRemaining = getTrialDaysRemaining(trialStartedAt);
+        const expiresAt = getTrialExpirationDate(trialStartedAt);
+        
+        return {
+          can_access: trialActive,
+          has_active_trial: trialActive,
+          trial_started_at: trialStartedAt || null,
+          trial_expires_at: expiresAt?.toISOString() || null,
+          trial_days_remaining: daysRemaining,
+          has_subscription: false,
+          subscription_status: null,
+          reason: trialActive ? 'active_trial' : 'trial_expired',
+        };
+      }
+      
+      console.log('[UsageContext] Can access result:', data);
+      return data as CanAccessResult;
+    },
+    enabled: !!user?.id,
+    staleTime: 30000,
   });
 
   // ============================================
@@ -160,50 +255,67 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   });
 
   // ============================================
-  // COMPUTED USAGE STATE
+  // COMPUTED USAGE STATE (Time-based Trial)
   // ============================================
   
   const computeUsageState = (): UsageState => {
     const subscription = subscriptionQuery.data;
     const usageCredits = usageCreditsQuery.data;
     const canRecordResult = canRecordQuery.data;
+    const canAccessResult = canAccessQuery.data;
     
     const hasActiveSubscription = subscription?.status === 'active';
-    const minutesIncluded = subscription?.monthly_minutes_included ?? 10;
-    const overageRateCents = subscription?.overage_rate_cents ?? 100;
-    const minutesUsedThisPeriod = usageCredits?.minutes_used_this_period ?? 0;
     
-    // Calculate remaining and overage
-    const minutesRemaining = Math.max(0, minutesIncluded - minutesUsedThisPeriod);
-    const overageMinutes = Math.max(0, minutesUsedThisPeriod - minutesIncluded);
-    const estimatedOverageCharge = calculateOverageCharge(overageMinutes, overageRateCents);
+    // Time-based trial calculations
+    const trialStartedAt = canRecordResult?.trial_started_at 
+      ? new Date(canRecordResult.trial_started_at) 
+      : (profile?.trial_started_at ? new Date(profile.trial_started_at) : null);
     
-    // Period dates
+    const trialExpiresAt = canRecordResult?.trial_expires_at
+      ? new Date(canRecordResult.trial_expires_at)
+      : getTrialExpirationDate(trialStartedAt);
+    
+    const trialDaysRemaining = canRecordResult?.trial_days_remaining ?? getTrialDaysRemaining(trialStartedAt);
+    const hasActiveTrial = canRecordResult?.has_active_trial ?? isTrialActive(trialStartedAt);
+    const isTrialExpired = !hasActiveTrial && !hasActiveSubscription;
+    
+    // Subscription period dates (for subscribers)
     const periodStart = usageCredits?.period_start ? new Date(usageCredits.period_start) : null;
-    const periodEnd = usageCredits?.period_end ? new Date(usageCredits.period_end) : null;
+    const periodEnd = subscription?.current_period_end ? new Date(subscription.current_period_end) : null;
     const daysRemainingInPeriod = getDaysRemainingInPeriod(periodEnd);
     
-    // Free trial from profile
-    const freeTrialMinutesRemaining = profile?.free_trial_minutes_remaining ?? 15;
-    const isInFreeTrial = (profile?.has_free_trial ?? true) && freeTrialMinutesRemaining > 0;
+    // Access checks
+    const canRecord = canRecordResult?.can_record ?? (hasActiveTrial || hasActiveSubscription);
+    const canAccessFeatures = canAccessResult?.can_access ?? (hasActiveTrial || hasActiveSubscription);
+    const accessReason = canRecordResult?.reason ?? (
+      hasActiveSubscription ? 'active_subscription' : 
+      hasActiveTrial ? 'active_trial' : 
+      'trial_expired'
+    );
     
     return {
       hasActiveSubscription,
       subscription,
-      isInFreeTrial,
-      freeTrialMinutesRemaining,
-      minutesUsedThisPeriod,
-      minutesIncluded,
-      minutesRemaining,
-      overageMinutes,
-      overageRateCents,
-      estimatedOverageCharge,
+      
+      // Time-based trial info
+      hasActiveTrial,
+      trialStartedAt,
+      trialExpiresAt,
+      trialDaysRemaining,
+      isTrialExpired,
+      
+      // Lifetime stats
       lifetimeMinutesUsed: usageCredits?.lifetime_minutes_used ?? 0,
+      
+      // Subscription period dates
       periodStart,
       periodEnd,
       daysRemainingInPeriod,
-      canRecord: canRecordResult?.can_record ?? (isInFreeTrial || hasActiveSubscription),
-      canRecordReason: canRecordResult?.reason ?? (hasActiveSubscription ? 'active_subscription' : isInFreeTrial ? 'free_trial' : 'no_credits'),
+      
+      // Access checks
+      canRecord,
+      canAccessFeatures,
+      accessReason,
     };
   };
 
@@ -219,13 +331,17 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
       queryClient.invalidateQueries({ queryKey: ['subscription', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['usageCredits', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] }),
+      queryClient.invalidateQueries({ queryKey: ['canAccess', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['usageTransactions', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
     ]);
   };
 
   const refreshCanRecord = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] }),
+      queryClient.invalidateQueries({ queryKey: ['canAccess', user?.id] }),
+    ]);
   };
 
   /**
@@ -236,6 +352,7 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['subscription', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['canRecord', user?.id] }),
+      queryClient.invalidateQueries({ queryKey: ['canAccess', user?.id] }),
       queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
     ]);
   };
@@ -245,49 +362,75 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   // ============================================
   
   /**
-   * Check if user needs to see paywall (no credits available)
+   * Check if user needs to see paywall (trial expired, no subscription)
    */
   const shouldShowPaywall = (): boolean => {
-    return !usageState.canRecord;
+    return usageState.isTrialExpired;
   };
 
   /**
-   * Check if user's credits are running low (for free trial only)
-   * Subscribers have unlimited access
+   * Check if trial is ending soon (last 2 days)
+   * Used to show urgency messaging
    */
-  const isLowOnCredits = (): boolean => {
-    if (usageState.hasActiveSubscription) {
-      // Unlimited subscribers never run low
-      return false;
-    }
-    return usageState.freeTrialMinutesRemaining < 3;
+  const isTrialEndingSoon = (): boolean => {
+    if (usageState.hasActiveSubscription) return false;
+    if (!usageState.hasActiveTrial) return false;
+    return usageState.trialDaysRemaining <= 2;
   };
 
   /**
-   * Get available minutes (free trial or subscription)
-   * Subscribers have unlimited access
+   * Check if user can access meeting details
+   * @returns true if user has active trial or subscription
    */
-  const getAvailableMinutes = (): number => {
-    if (usageState.hasActiveSubscription) {
-      // Unlimited access for subscribers
-      return Infinity;
-    }
-    return usageState.freeTrialMinutesRemaining;
+  const canAccessMeetingDetails = (): boolean => {
+    return usageState.canAccessFeatures;
   };
 
   /**
-   * Get a user-friendly message about their credit status
+   * Check if user can start a new recording
+   * @returns true if user has active trial or subscription
+   */
+  const canStartRecording = (): boolean => {
+    return usageState.canRecord;
+  };
+
+  /**
+   * Get a user-friendly message about their trial/subscription status
+   */
+  const getStatusMessage = (): string => {
+    return formatTrialStatusMessage(
+      usageState.trialStartedAt?.toISOString() || null,
+      usageState.hasActiveSubscription
+    );
+  };
+
+  /**
+   * @deprecated Use getStatusMessage instead
+   * Kept for backward compatibility
    */
   const getCreditStatusMessage = (): string => {
-    if (usageState.hasActiveSubscription) {
-      return 'Unlimited Access';
+    return getStatusMessage();
+  };
+
+  /**
+   * @deprecated Trial is now unlimited during trial period
+   * Kept for backward compatibility - always returns false
+   */
+  const isLowOnCredits = (): boolean => {
+    // With time-based trial, there's no "low on credits" state
+    // Instead, use isTrialEndingSoon() for urgency
+    return false;
+  };
+
+  /**
+   * @deprecated Trial is now unlimited during trial period
+   * Kept for backward compatibility
+   */
+  const getAvailableMinutes = (): number => {
+    if (usageState.hasActiveSubscription || usageState.hasActiveTrial) {
+      return Infinity; // Unlimited during trial and subscription
     }
-    
-    if (usageState.isInFreeTrial) {
-      return `${usageState.freeTrialMinutesRemaining} free trial min remaining`;
-    }
-    
-    return 'Subscribe for unlimited access';
+    return 0;
   };
 
   return {
@@ -305,14 +448,27 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     
     // Convenience booleans
     hasActiveSubscription: usageState.hasActiveSubscription,
-    isInFreeTrial: usageState.isInFreeTrial,
+    hasActiveTrial: usageState.hasActiveTrial,
+    isTrialExpired: usageState.isTrialExpired,
     canRecord: usageState.canRecord,
+    canAccessFeatures: usageState.canAccessFeatures,
+    
+    // Trial info
+    trialDaysRemaining: usageState.trialDaysRemaining,
+    trialExpiresAt: usageState.trialExpiresAt,
     
     // Helper functions
     shouldShowPaywall,
-    isLowOnCredits,
-    getAvailableMinutes,
-    getCreditStatusMessage,
+    isTrialEndingSoon,
+    canAccessMeetingDetails,
+    canStartRecording,
+    getStatusMessage,
+    
+    // Deprecated but kept for backward compatibility
+    isInFreeTrial: usageState.hasActiveTrial, // Alias for hasActiveTrial
+    getCreditStatusMessage, // Alias for getStatusMessage
+    isLowOnCredits, // Always returns false now
+    getAvailableMinutes, // Returns Infinity during trial/sub
     
     // Refresh functions
     refreshUsage,
@@ -320,4 +476,3 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     refreshSubscription,
   };
 });
-

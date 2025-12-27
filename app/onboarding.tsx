@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Shield, Mic, FileText, CheckCircle } from "lucide-react-native";
+import { Ban, Clock, FileText } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 
@@ -18,29 +18,28 @@ Dimensions.get("window");
 
 const STEPS = [
   {
-    icon: Shield,
-    title: "Legal Meeting Intelligence",
-    subtitle: "Your AI-powered meeting assistant for legal professionals",
-    description: "Record meetings, get AI summaries, track action items, and bill accurately.",
+    icon: Ban,
+    title: "Eliminate Disputes",
+    subtitle: "Never miss critical agreements",
+    description: "Refer back to the exact moment a client agreed to the terms.",
   },
   {
-    icon: Mic,
-    title: "One-Button Recording",
-    subtitle: "Start recording instantly",
-    description: "No setup required. Just tap and record. Add details later if needed.",
+    icon: Clock,
+    title: "Recover Billable Hours",
+    subtitle: "Track every minute accurately",
+    description: "Automated duration tracking ensures you bill for every minute.",
   },
   {
     icon: FileText,
-    title: "AI-Powered Summaries",
-    subtitle: "Structured legal documentation",
-    description: "Get key facts, legal issues, decisions, risks, and action items automatically extracted.",
+    title: "Instant Meeting Summaries",
+    subtitle: "Stop taking notes",
+    description: "Get accurate transcripts & summaries instantly with exact speaker attribution.",
   },
 ];
 
 export default function OnboardingScreen() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const handleNext = () => {
@@ -48,7 +47,7 @@ export default function OnboardingScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    if (currentStep < STEPS.length) {
+    if (currentStep < STEPS.length - 1) {
       Animated.sequence([
         Animated.timing(fadeAnim, {
           toValue: 0,
@@ -68,59 +67,23 @@ export default function OnboardingScreen() {
     }
   };
 
-  const toggleTerms = () => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setAgreedToTerms(!agreedToTerms);
-  };
-
   const renderStep = () => {
-    if (currentStep < STEPS.length) {
-      const step = STEPS[currentStep];
-      const Icon = step.icon;
-
-      return (
-        <Animated.View style={[styles.stepContent, { opacity: fadeAnim }]}>
-          <View style={styles.iconContainer}>
-            <Icon size={64} color={Colors.accentLight} strokeWidth={1.5} />
-          </View>
-          <Text style={styles.title}>{step.title}</Text>
-          <Text style={styles.subtitle}>{step.subtitle}</Text>
-          <Text style={styles.description}>{step.description}</Text>
-        </Animated.View>
-      );
-    }
+    const step = STEPS[currentStep];
+    const Icon = step.icon;
 
     return (
       <Animated.View style={[styles.stepContent, { opacity: fadeAnim }]}>
         <View style={styles.iconContainer}>
-          <Shield size={64} color={Colors.accentLight} strokeWidth={1.5} />
+          <Icon size={64} color={Colors.accentLight} strokeWidth={1.5} />
         </View>
-        <Text style={styles.title}>Legal Disclaimer</Text>
-        <Text style={styles.disclaimerText}>
-          This app uses AI to generate meeting summaries and documentation.
-          {"\n\n"}
-          <Text style={styles.boldText}>Important:</Text>
-          {"\n"}• AI-generated content may contain errors
-          {"\n"}• This is NOT legal advice
-          {"\n"}• Always verify important information
-          {"\n"}• You are responsible for ensuring recording consent
-          {"\n"}• Check local laws regarding recording
-        </Text>
-
-        <Pressable style={styles.checkboxRow} onPress={toggleTerms}>
-          <View style={[styles.checkbox, agreedToTerms && styles.checkboxChecked]}>
-            {agreedToTerms && <CheckCircle size={20} color={Colors.text} />}
-          </View>
-          <Text style={styles.checkboxLabel}>I understand and agree</Text>
-        </Pressable>
+        <Text style={styles.title}>{step.title}</Text>
+        <Text style={styles.subtitle}>{step.subtitle}</Text>
+        <Text style={styles.description}>{step.description}</Text>
       </Animated.View>
     );
   };
 
-  const isLastStep = currentStep === STEPS.length;
-  const canProceed = !isLastStep || agreedToTerms;
+  const isLastStep = currentStep === STEPS.length - 1;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -129,7 +92,7 @@ export default function OnboardingScreen() {
 
         <View style={styles.footer}>
           <View style={styles.dots}>
-            {[...Array(STEPS.length + 1)].map((_, i) => (
+            {STEPS.map((_, i) => (
               <View
                 key={i}
                 style={[styles.dot, i === currentStep && styles.dotActive]}
@@ -137,13 +100,9 @@ export default function OnboardingScreen() {
             ))}
           </View>
 
-          <Pressable
-            style={[styles.button, !canProceed && styles.buttonDisabled]}
-            onPress={handleNext}
-            disabled={!canProceed}
-          >
+          <Pressable style={styles.button} onPress={handleNext}>
             <Text style={styles.buttonText}>
-              {isLastStep ? "Continue" : "Next"}
+              {isLastStep ? "Get Started" : "Next"}
             </Text>
           </Pressable>
         </View>
@@ -200,42 +159,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     paddingHorizontal: 20,
   },
-  disclaimerText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    textAlign: "left",
-    lineHeight: 24,
-    paddingHorizontal: 8,
-  },
-  boldText: {
-    fontWeight: "700" as const,
-    color: Colors.text,
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 32,
-    paddingVertical: 12,
-  },
-  checkbox: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  checkboxChecked: {
-    backgroundColor: Colors.accentLight,
-    borderColor: Colors.accentLight,
-  },
-  checkboxLabel: {
-    fontSize: 16,
-    color: Colors.text,
-    fontWeight: "500" as const,
-  },
   footer: {
     paddingBottom: 24,
   },
@@ -260,10 +183,6 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     borderRadius: 16,
     alignItems: "center",
-  },
-  buttonDisabled: {
-    backgroundColor: Colors.surfaceLight,
-    opacity: 0.5,
   },
   buttonText: {
     fontSize: 18,

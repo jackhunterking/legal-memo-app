@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Mail, Lock, Eye, EyeOff, Fingerprint } from "lucide-react-native";
+import { Mail, Lock, Eye, EyeOff, Fingerprint, Gift } from "lucide-react-native";
+import { SUBSCRIPTION_PLAN } from "@/types";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
@@ -212,6 +213,16 @@ export default function AuthScreen() {
               )}
             </Pressable>
 
+            {/* Free Trial Banner - only show for signup */}
+            {!isLogin && (
+              <View style={styles.trialBanner}>
+                <Gift size={18} color={Colors.accent} />
+                <Text style={styles.trialBannerText}>
+                  {SUBSCRIPTION_PLAN.freeTrialDays}-day free trial • No credit card required
+                </Text>
+              </View>
+            )}
+
             {isLogin && biometricAvailable && biometricEnabled && (
               <Pressable
                 style={[styles.biometricButton, isLoading && styles.buttonDisabled]}
@@ -344,5 +355,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600" as const,
     color: Colors.text,
+  },
+  trialBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: `${Colors.accent}15`,
+    borderRadius: 10,
+    marginTop: 8,
+  },
+  trialBannerText: {
+    fontSize: 14,
+    fontWeight: "600" as const,
+    color: Colors.accent,
   },
 });

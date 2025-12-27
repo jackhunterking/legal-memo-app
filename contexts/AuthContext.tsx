@@ -148,6 +148,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
           email: userEmail,
           display_name: profileData.display_name ?? null,
           onboarding_completed: true,
+          // Set trial start date for new users (7-day free trial starts now)
+          trial_started_at: new Date().toISOString(),
         })
         .select()
         .single();

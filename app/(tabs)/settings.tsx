@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Tag, Plus, Pencil, X, Check, Users, DollarSign, CreditCard, Zap, Clock } from "lucide-react-native";
+import { LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Tag, Plus, Pencil, X, Check, Users, DollarSign, CreditCard, Zap, Clock, AlertTriangle } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMeetings } from "@/contexts/MeetingContext";
@@ -444,8 +444,9 @@ export default function SettingsScreen() {
   const {
     usageState,
     hasActiveSubscription,
-    isInFreeTrial,
-    getCreditStatusMessage,
+    hasActiveTrial,
+    isTrialExpired,
+    trialDaysRemaining,
     isLoading: isUsageLoading,
   } = useUsage();
 
@@ -860,21 +861,38 @@ export default function SettingsScreen() {
             <View style={styles.settingLeft}>
               {hasActiveSubscription ? (
                 <Zap size={20} color={Colors.accent} />
-              ) : isInFreeTrial ? (
-                <Clock size={20} color={Colors.warning} />
+              ) : isTrialExpired ? (
+                <AlertTriangle size={20} color={Colors.error} />
+              ) : hasActiveTrial ? (
+                <Clock size={20} color={trialDaysRemaining <= 2 ? Colors.warning : Colors.accent} />
               ) : (
                 <CreditCard size={20} color={Colors.textMuted} />
               )}
               <View style={styles.billingInfo}>
                 <Text style={styles.settingLabel}>
-                  {hasActiveSubscription ? "Pro Subscription" : isInFreeTrial ? "Free Trial" : "No Subscription"}
+                  {hasActiveSubscription 
+                    ? "Pro Subscription" 
+                    : isTrialExpired 
+                      ? "Trial Expired" 
+                      : hasActiveTrial 
+                        ? "Free Trial" 
+                        : "No Subscription"}
                 </Text>
                 <Text style={[
                   styles.billingHint,
                   hasActiveSubscription && { color: Colors.success },
-                  isInFreeTrial && { color: Colors.warning },
+                  hasActiveTrial && !isTrialExpired && { color: trialDaysRemaining <= 2 ? Colors.warning : Colors.accent },
+                  isTrialExpired && { color: Colors.error },
                 ]}>
-                  {getCreditStatusMessage()}
+                  {hasActiveSubscription 
+                    ? 'Unlimited Access'
+                    : isTrialExpired 
+                      ? 'Subscribe to continue'
+                      : trialDaysRemaining === 0
+                        ? 'Trial ends today!'
+                        : trialDaysRemaining === 1
+                          ? 'Trial ends tomorrow!'
+                          : `${trialDaysRemaining} days left in trial`}
                 </Text>
               </View>
             </View>
@@ -892,26 +910,33 @@ export default function SettingsScreen() {
                 <>
                   <View style={styles.usageStatDivider} />
                   <View style={styles.usageStat}>
-                    <Text style={styles.usageStatValue}>{usageState.minutesUsedThisPeriod}</Text>
-                    <Text style={styles.usageStatLabel}>This Month</Text>
-                  </View>
-                  <View style={styles.usageStatDivider} />
-                  <View style={styles.usageStat}>
-                    <Text style={[styles.usageStatValue, usageState.minutesRemaining <= 3 && { color: Colors.warning }]}>
-                      {usageState.minutesRemaining}
-                    </Text>
-                    <Text style={styles.usageStatLabel}>Remaining</Text>
+                    <Text style={styles.usageStatValue}>∞</Text>
+                    <Text style={styles.usageStatLabel}>Unlimited</Text>
                   </View>
                 </>
               )}
-              {isInFreeTrial && (
+              {hasActiveTrial && !isTrialExpired && (
                 <>
                   <View style={styles.usageStatDivider} />
                   <View style={styles.usageStat}>
-                    <Text style={[styles.usageStatValue, usageState.freeTrialMinutesRemaining <= 3 && { color: Colors.warning }]}>
-                      {usageState.freeTrialMinutesRemaining}
+                    <Text style={[styles.usageStatValue, trialDaysRemaining <= 2 && { color: Colors.warning }]}>
+                      {trialDaysRemaining}
                     </Text>
-                    <Text style={styles.usageStatLabel}>Trial Left</Text>
+                    <Text style={styles.usageStatLabel}>Days Left</Text>
+                  </View>
+                  <View style={styles.usageStatDivider} />
+                  <View style={styles.usageStat}>
+                    <Text style={styles.usageStatValue}>∞</Text>
+                    <Text style={styles.usageStatLabel}>Unlimited</Text>
+                  </View>
+                </>
+              )}
+              {isTrialExpired && !hasActiveSubscription && (
+                <>
+                  <View style={styles.usageStatDivider} />
+                  <View style={styles.usageStat}>
+                    <Text style={[styles.usageStatValue, { color: Colors.error }]}>0</Text>
+                    <Text style={styles.usageStatLabel}>Days Left</Text>
                   </View>
                 </>
               )}

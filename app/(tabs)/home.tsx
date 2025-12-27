@@ -7,11 +7,10 @@ import {
   Animated,
   Platform,
   TouchableOpacity,
-  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Mic, User, Users, AlertTriangle, CreditCard } from "lucide-react-native";
+import { Mic, User, Users } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,9 +26,7 @@ export default function HomeScreen() {
   useAuth();
   const { 
     canRecord, 
-    isLowOnCredits, 
-    getCreditStatusMessage, 
-    usageState,
+    isTrialExpired,
     refreshCanRecord,
   } = useUsage();
   
@@ -74,44 +71,9 @@ export default function HomeScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      if (Platform.OS === "web") {
-        router.push("/subscription");
-      } else {
-        Alert.alert(
-          "No Credits Available",
-          "You've used all your free trial minutes. Subscribe to continue recording meetings.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { 
-              text: "View Plans", 
-              onPress: () => router.push("/subscription") 
-            },
-          ]
-        );
-      }
+      // Navigate to subscription page
+      router.push("/subscription");
       return;
-    }
-
-    // Warn if low on credits
-    if (isLowOnCredits()) {
-      const proceed = await new Promise<boolean>((resolve) => {
-        if (Platform.OS === "web") {
-          resolve(true);
-        } else {
-          Alert.alert(
-            "Low Credits",
-            `You have ${usageState.isInFreeTrial 
-              ? `${usageState.freeTrialMinutesRemaining} free trial minutes` 
-              : `${usageState.minutesRemaining} minutes`} remaining. Continue recording?`,
-            [
-              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-              { text: "Continue", onPress: () => resolve(true) },
-            ]
-          );
-        }
-      });
-      
-      if (!proceed) return;
     }
 
     Animated.sequence([
@@ -150,31 +112,6 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Start Recording</Text>
       </View>
-
-      {/* Credit Status Banner */}
-      <Pressable 
-        style={[
-          styles.creditBanner,
-          !canRecord && styles.creditBannerError,
-          isLowOnCredits() && canRecord && styles.creditBannerWarning,
-        ]}
-        onPress={() => router.push("/subscription")}
-      >
-        {!canRecord ? (
-          <AlertTriangle size={16} color={Colors.error} />
-        ) : isLowOnCredits() ? (
-          <AlertTriangle size={16} color={Colors.warning} />
-        ) : (
-          <CreditCard size={16} color={Colors.accent} />
-        )}
-        <Text style={[
-          styles.creditBannerText,
-          !canRecord && styles.creditBannerTextError,
-          isLowOnCredits() && canRecord && styles.creditBannerTextWarning,
-        ]}>
-          {getCreditStatusMessage()}
-        </Text>
-      </Pressable>
 
       {/* Meeting Type Selector */}
       <View style={styles.meetingTypeSection}>
@@ -265,11 +202,17 @@ export default function HomeScreen() {
                   outputRange: [0.6, 0],
                 }),
               },
+              // Dim the pulse ring if trial expired
+              isTrialExpired && { opacity: 0.2 },
             ]}
           />
           <Animated.View style={[styles.buttonWrapper, { transform: [{ scale: scaleAnim }] }]}>
             <Pressable
-              style={[styles.recordButton, isCreating && styles.recordButtonDisabled]}
+              style={[
+                styles.recordButton, 
+                isCreating && styles.recordButtonDisabled,
+                isTrialExpired && styles.recordButtonLocked,
+              ]}
               onPress={handleStartRecording}
               disabled={isCreating}
             >
@@ -277,8 +220,13 @@ export default function HomeScreen() {
             </Pressable>
           </Animated.View>
         </View>
-        <Text style={styles.recordHint}>Tap to begin recording</Text>
+        <Text style={styles.recordHint}>
+          {isTrialExpired 
+            ? 'Subscribe to start recording' 
+            : 'Tap to begin recording'}
+        </Text>
       </View>
+
     </SafeAreaView>
   );
 }
@@ -300,39 +248,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     letterSpacing: -0.5,
     textAlign: "center",
-  },
-  creditBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginHorizontal: 24,
-    marginBottom: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  creditBannerWarning: {
-    backgroundColor: "rgba(245, 158, 11, 0.1)",
-    borderColor: "rgba(245, 158, 11, 0.3)",
-  },
-  creditBannerError: {
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
-    borderColor: "rgba(239, 68, 68, 0.3)",
-  },
-  creditBannerText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: Colors.textSecondary,
-  },
-  creditBannerTextWarning: {
-    color: Colors.warning,
-  },
-  creditBannerTextError: {
-    color: Colors.error,
   },
   meetingTypeSection: {
     paddingHorizontal: 24,
@@ -421,6 +336,10 @@ const styles = StyleSheet.create({
   },
   recordButtonDisabled: {
     opacity: 0.6,
+  },
+  recordButtonLocked: {
+    backgroundColor: Colors.surfaceLight,
+    shadowOpacity: 0.2,
   },
   recordHint: {
     marginTop: 8,
