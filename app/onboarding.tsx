@@ -11,7 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ban, Clock, FileText } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact } from "@/lib/haptics";
 import Colors from "@/constants/colors";
 
 Dimensions.get("window");
@@ -44,7 +44,7 @@ export default function OnboardingScreen() {
 
   const handleNext = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
 
     if (currentStep < STEPS.length - 1) {

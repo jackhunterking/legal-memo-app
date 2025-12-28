@@ -11,7 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Search, X, Clock, ChevronRight } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact } from "@/lib/haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import type { Meeting } from "@/types";
@@ -34,14 +34,14 @@ export default function SearchScreen() {
 
   const handleMeetingPress = (meeting: Meeting) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.push(`/meeting/${meeting.id}`);
   };
 
   const handleClose = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.back();
   };

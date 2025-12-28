@@ -25,7 +25,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Pause, Play, Square, Mic } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { mediumImpact, heavyImpact, successNotification } from "@/lib/haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
@@ -140,7 +140,7 @@ export default function RecordingScreen() {
   // Handle pause/resume
   const handlePauseResume = async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      mediumImpact();
     }
 
     if (isPaused) {
@@ -152,9 +152,7 @@ export default function RecordingScreen() {
 
   // Handle stop recording
   const handleStop = async () => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    }
+    heavyImpact();
 
     const confirmStop = () => {
       performStop();
@@ -203,9 +201,7 @@ export default function RecordingScreen() {
 
       // Navigate to meeting detail
       // User will see transcript immediately with "Speaker detection in progress" banner
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
       
       router.replace(`/meeting/${meetingId}`);
     } catch (err) {

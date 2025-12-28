@@ -30,7 +30,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { X, ChevronDown, Check } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useContactDetails, useContacts } from "@/contexts/ContactContext";
 import { useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
@@ -91,9 +91,7 @@ export default function EditContactScreen() {
       return;
     }
 
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     try {
       const contactData = {
@@ -130,9 +128,7 @@ export default function EditContactScreen() {
       // Ensure the contacts list is refreshed
       await refetchContacts();
 
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
       router.back();
     } catch (err) {
       console.error("[EditContact] Error saving contact:", err);
@@ -142,14 +138,14 @@ export default function EditContactScreen() {
 
   const handleCancel = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.back();
   };
 
   const handleSelectCategory = (category: ContactCategory | null) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setSelectedCategoryId(category?.id || null);
     setShowCategorySelector(false);

@@ -12,7 +12,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { X, ChevronDown, Check } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import type { MeetingType } from "@/types";
@@ -42,9 +42,7 @@ export default function EditMeetingScreen() {
   const handleSave = async () => {
     if (!id) return;
 
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     try {
       await updateMeeting({
@@ -62,14 +60,14 @@ export default function EditMeetingScreen() {
 
   const handleCancel = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.back();
   };
 
   const handleSelectType = (type: MeetingType | null) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setSelectedTypeId(type?.id || null);
     setShowTypeSelector(false);

@@ -11,7 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mic, User, Users } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, heavyImpact, warningNotification } from "@/lib/haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUsage } from "@/contexts/UsageContext";
@@ -64,15 +64,11 @@ export default function HomeScreen() {
   }, [pulseAnim]);
 
   const handleStartRecording = async () => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    }
+    heavyImpact();
 
     // Check if user can record
     if (!canRecord) {
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      }
+      warningNotification();
       
       // Navigate to subscription page
       router.push("/subscription");
@@ -105,7 +101,7 @@ export default function HomeScreen() {
 
   const handleSpeakerSelect = (speakers: ExpectedSpeakers) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setExpectedSpeakers(speakers);
   };

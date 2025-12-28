@@ -46,7 +46,7 @@ import {
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useContactDetails, useContactMeetings, useContacts, useContactBillingSummary } from "@/contexts/ContactContext";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
@@ -229,7 +229,7 @@ export default function ContactDetailScreen() {
   // Toggle collapsible with animation
   const toggleDetails = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     Animated.timing(detailsRotation, {
@@ -270,7 +270,7 @@ export default function ContactDetailScreen() {
   // Handle entering edit mode
   const handleEdit = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     loadEditState();
     setIsEditing(true);
@@ -279,7 +279,7 @@ export default function ContactDetailScreen() {
   // Handle cancel editing
   const handleCancel = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setIsEditing(false);
   };
@@ -293,9 +293,7 @@ export default function ContactDetailScreen() {
       return;
     }
 
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     try {
       await updateContact({
@@ -314,9 +312,7 @@ export default function ContactDetailScreen() {
       await refetch();
       setIsEditing(false);
       
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[ContactDetail] Update error:", err);
       Alert.alert("Error", "Could not save changes. Please try again.");
@@ -330,9 +326,7 @@ export default function ContactDetailScreen() {
     const performDelete = async () => {
       try {
         await deleteContact(id);
-        if (Platform.OS !== "web") {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
+        successNotification();
         router.replace("/(tabs)/contacts");
       } catch (err) {
         console.error("[ContactDetail] Delete error:", err);
@@ -370,7 +364,7 @@ export default function ContactDetailScreen() {
   // Navigate to settings to manage categories
   const handleManageCategories = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setShowCategorySelector(false);
     router.push("/(tabs)/settings");
@@ -405,7 +399,7 @@ export default function ContactDetailScreen() {
   // Handle meeting press
   const handleMeetingPress = (meeting: Meeting) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.push(`/meeting/${meeting.id}`);
   };

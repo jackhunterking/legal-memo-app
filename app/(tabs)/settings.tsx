@@ -17,7 +17,7 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LogOut, Trash2, ChevronRight, Info, MessageCircleHeart, Send, Fingerprint, Tag, Plus, Pencil, X, Check, Users, DollarSign, CreditCard, Zap, Clock, AlertTriangle, ExternalLink, Crown } from "lucide-react-native";
 import * as Linking from "expo-linking";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useContacts } from "@/contexts/ContactContext";
@@ -26,7 +26,6 @@ import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, setBiometricEnabled } from "@/lib/biometrics";
 import { DEFAULT_TYPE_COLORS, MeetingType, ContactCategory, DEFAULT_CONTACT_CATEGORY_COLORS, CURRENCY_SYMBOLS } from "@/types";
 import DraggableBottomSheet from "@/components/DraggableBottomSheet";
-import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 
 // Meeting Type Editor Modal Component
 const MeetingTypeModal = ({
@@ -120,99 +119,86 @@ const MeetingTypeModal = ({
       visible={visible}
       onClose={onClose}
       title={type ? "Edit Type" : "New Meeting Type"}
-      snapPoints={["60%", "85%"]}
-      enableFullScreen={true}
+      height={70}
     >
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <BottomSheetScrollView 
-          style={modalStyles.scrollContent}
-          contentContainerStyle={modalStyles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={modalStyles.label}>Name</Text>
-          <TextInput
-            ref={inputRef}
-            style={modalStyles.input}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g., Client Call"
-            placeholderTextColor={Colors.textMuted}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={handleDismissKeyboard}
-            blurOnSubmit={true}
-          />
+      <Text style={modalStyles.label}>Name</Text>
+      <TextInput
+        ref={inputRef}
+        style={modalStyles.input}
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g., Client Call"
+        placeholderTextColor={Colors.textMuted}
+        autoFocus
+        returnKeyType="done"
+        onSubmitEditing={handleDismissKeyboard}
+        blurOnSubmit={true}
+      />
 
-          <Text style={modalStyles.label}>Color</Text>
-          <View style={modalStyles.colorGrid}>
-            {DEFAULT_TYPE_COLORS.map((color) => (
-              <Pressable
-                key={color}
-                style={[
-                  modalStyles.colorOption,
-                  { backgroundColor: color },
-                  selectedColor === color && modalStyles.colorOptionSelected,
-                ]}
-                onPress={() => {
-                  setSelectedColor(color);
-                  Keyboard.dismiss();
-                }}
-              >
-                {selectedColor === color && <Check size={16} color="#fff" />}
-              </Pressable>
-            ))}
-          </View>
+      <Text style={modalStyles.label}>Color</Text>
+      <View style={modalStyles.colorGrid}>
+        {DEFAULT_TYPE_COLORS.map((color) => (
+          <Pressable
+            key={color}
+            style={[
+              modalStyles.colorOption,
+              { backgroundColor: color },
+              selectedColor === color && modalStyles.colorOptionSelected,
+            ]}
+            onPress={() => {
+              setSelectedColor(color);
+              Keyboard.dismiss();
+            }}
+          >
+            {selectedColor === color && <Check size={16} color="#fff" />}
+          </Pressable>
+        ))}
+      </View>
 
-          <View style={modalStyles.preview}>
-            <Text style={modalStyles.previewLabel}>Preview:</Text>
-            <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
-              <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
-              <Text style={[modalStyles.previewText, { color: selectedColor }]}>
-                {name || "Meeting Type"}
-              </Text>
-            </View>
-          </View>
+      <View style={modalStyles.preview}>
+        <Text style={modalStyles.previewLabel}>Preview:</Text>
+        <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
+          <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
+          <Text style={[modalStyles.previewText, { color: selectedColor }]}>
+            {name || "Meeting Type"}
+          </Text>
+        </View>
+      </View>
 
-          <View style={modalStyles.footer}>
-            {type && !type.is_default && onDelete && (
-              <Pressable
-                style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
-                onPress={handleDelete}
-                disabled={isDeleting}
-              >
-                {isDeleting ? (
-                  <ActivityIndicator size="small" color={Colors.error} />
-                ) : (
-                  <>
-                    <Trash2 size={16} color={Colors.error} />
-                    <Text style={modalStyles.deleteButtonText}>Delete</Text>
-                  </>
-                )}
-              </Pressable>
+      <View style={modalStyles.footer}>
+        {type && !type.is_default && onDelete && (
+          <Pressable
+            style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
+            onPress={handleDelete}
+            disabled={isDeleting}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={Colors.error} />
+            ) : (
+              <>
+                <Trash2 size={16} color={Colors.error} />
+                <Text style={modalStyles.deleteButtonText}>Delete</Text>
+              </>
             )}
-            <View style={modalStyles.actionButtons}>
-              <Pressable style={modalStyles.cancelButton} onPress={onClose}>
-                <Text style={modalStyles.cancelButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <ActivityIndicator size="small" color={Colors.text} />
-                ) : (
-                  <Text style={modalStyles.saveButtonText}>Save</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </BottomSheetScrollView>
-      </KeyboardAvoidingView>
+          </Pressable>
+        )}
+        <View style={modalStyles.actionButtons}>
+          <Pressable style={modalStyles.cancelButton} onPress={onClose}>
+            <Text style={modalStyles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : (
+              <Text style={modalStyles.saveButtonText}>Save</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
     </DraggableBottomSheet>
   );
 };
@@ -308,99 +294,86 @@ const ContactCategoryModal = ({
       visible={visible}
       onClose={onClose}
       title={category ? "Edit Category" : "New Contact Category"}
-      snapPoints={["60%", "85%"]}
-      enableFullScreen={true}
+      height={70}
     >
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <BottomSheetScrollView 
-          style={modalStyles.scrollContent}
-          contentContainerStyle={modalStyles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={modalStyles.label}>Name</Text>
-          <TextInput
-            ref={inputRef}
-            style={modalStyles.input}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g., Client"
-            placeholderTextColor={Colors.textMuted}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={handleDismissKeyboard}
-            blurOnSubmit={true}
-          />
+      <Text style={modalStyles.label}>Name</Text>
+      <TextInput
+        ref={inputRef}
+        style={modalStyles.input}
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g., Client"
+        placeholderTextColor={Colors.textMuted}
+        autoFocus
+        returnKeyType="done"
+        onSubmitEditing={handleDismissKeyboard}
+        blurOnSubmit={true}
+      />
 
-          <Text style={modalStyles.label}>Color</Text>
-          <View style={modalStyles.colorGrid}>
-            {DEFAULT_CONTACT_CATEGORY_COLORS.map((color) => (
-              <Pressable
-                key={color}
-                style={[
-                  modalStyles.colorOption,
-                  { backgroundColor: color },
-                  selectedColor === color && modalStyles.colorOptionSelected,
-                ]}
-                onPress={() => {
-                  setSelectedColor(color);
-                  Keyboard.dismiss();
-                }}
-              >
-                {selectedColor === color && <Check size={16} color="#fff" />}
-              </Pressable>
-            ))}
-          </View>
+      <Text style={modalStyles.label}>Color</Text>
+      <View style={modalStyles.colorGrid}>
+        {DEFAULT_CONTACT_CATEGORY_COLORS.map((color) => (
+          <Pressable
+            key={color}
+            style={[
+              modalStyles.colorOption,
+              { backgroundColor: color },
+              selectedColor === color && modalStyles.colorOptionSelected,
+            ]}
+            onPress={() => {
+              setSelectedColor(color);
+              Keyboard.dismiss();
+            }}
+          >
+            {selectedColor === color && <Check size={16} color="#fff" />}
+          </Pressable>
+        ))}
+      </View>
 
-          <View style={modalStyles.preview}>
-            <Text style={modalStyles.previewLabel}>Preview:</Text>
-            <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
-              <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
-              <Text style={[modalStyles.previewText, { color: selectedColor }]}>
-                {name || "Category Name"}
-              </Text>
-            </View>
-          </View>
+      <View style={modalStyles.preview}>
+        <Text style={modalStyles.previewLabel}>Preview:</Text>
+        <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
+          <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
+          <Text style={[modalStyles.previewText, { color: selectedColor }]}>
+            {name || "Category Name"}
+          </Text>
+        </View>
+      </View>
 
-          <View style={modalStyles.footer}>
-            {category && !category.is_default && onDelete && (
-              <Pressable
-                style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
-                onPress={handleDelete}
-                disabled={isDeleting}
-              >
-                {isDeleting ? (
-                  <ActivityIndicator size="small" color={Colors.error} />
-                ) : (
-                  <>
-                    <Trash2 size={16} color={Colors.error} />
-                    <Text style={modalStyles.deleteButtonText}>Delete</Text>
-                  </>
-                )}
-              </Pressable>
+      <View style={modalStyles.footer}>
+        {category && !category.is_default && onDelete && (
+          <Pressable
+            style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
+            onPress={handleDelete}
+            disabled={isDeleting}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={Colors.error} />
+            ) : (
+              <>
+                <Trash2 size={16} color={Colors.error} />
+                <Text style={modalStyles.deleteButtonText}>Delete</Text>
+              </>
             )}
-            <View style={modalStyles.actionButtons}>
-              <Pressable style={modalStyles.cancelButton} onPress={onClose}>
-                <Text style={modalStyles.cancelButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <ActivityIndicator size="small" color={Colors.text} />
-                ) : (
-                  <Text style={modalStyles.saveButtonText}>Save</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </BottomSheetScrollView>
-      </KeyboardAvoidingView>
+          </Pressable>
+        )}
+        <View style={modalStyles.actionButtons}>
+          <Pressable style={modalStyles.cancelButton} onPress={onClose}>
+            <Text style={modalStyles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : (
+              <Text style={modalStyles.saveButtonText}>Save</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
     </DraggableBottomSheet>
   );
 };
@@ -493,7 +466,7 @@ export default function SettingsScreen() {
 
   const handleAddType = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setEditingType(null);
     setShowTypeModal(true);
@@ -501,7 +474,7 @@ export default function SettingsScreen() {
 
   const handleEditType = (type: MeetingType) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setEditingType(type);
     setShowTypeModal(true);
@@ -520,9 +493,7 @@ export default function SettingsScreen() {
       // Close the modal
       setShowTypeModal(false);
       setEditingType(null);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[Settings] Delete type error:", err);
       Alert.alert("Error", "Could not delete meeting type.");
@@ -540,9 +511,7 @@ export default function SettingsScreen() {
       await refetchMeetingTypes();
       setShowTypeModal(false);
       setEditingType(null);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[Settings] Save type error:", err);
       Alert.alert("Error", "Could not save meeting type.");
@@ -552,7 +521,7 @@ export default function SettingsScreen() {
   // Contact Category handlers
   const handleAddCategory = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setEditingCategory(null);
     setShowCategoryModal(true);
@@ -560,7 +529,7 @@ export default function SettingsScreen() {
 
   const handleEditCategory = (category: ContactCategory) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setEditingCategory(category);
     setShowCategoryModal(true);
@@ -578,9 +547,7 @@ export default function SettingsScreen() {
       // Close the modal
       setShowCategoryModal(false);
       setEditingCategory(null);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[Settings] Delete category error:", err);
       Alert.alert("Error", "Could not delete contact category.");
@@ -597,9 +564,7 @@ export default function SettingsScreen() {
       await refetchContactCategories();
       setShowCategoryModal(false);
       setEditingCategory(null);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[Settings] Save category error:", err);
       Alert.alert("Error", "Could not save contact category.");
@@ -609,7 +574,7 @@ export default function SettingsScreen() {
   // Billing handlers
   const handleOpenBilling = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setHourlyRateInput(profile?.hourly_rate?.toString() || '');
     setSelectedCurrency(profile?.currency_symbol || '$');
@@ -634,9 +599,7 @@ export default function SettingsScreen() {
       });
 
       setShowBillingModal(false);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[Settings] Save billing error:", err);
       Alert.alert("Error", "Could not save billing settings.");
@@ -647,7 +610,7 @@ export default function SettingsScreen() {
 
   const handleToggleBiometric = async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
 
     try {
@@ -680,7 +643,7 @@ export default function SettingsScreen() {
    */
   const handleManageSubscription = async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
 
     setIsManagingSubscription(true);
@@ -762,9 +725,7 @@ export default function SettingsScreen() {
       return;
     }
 
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     setIsSubmitting(true);
 
@@ -777,9 +738,7 @@ export default function SettingsScreen() {
 
       setTimeout(() => setShowThankYou(false), 4000);
 
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     }, 1000);
   };
 
@@ -811,6 +770,29 @@ export default function SettingsScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.pageTitle}>Settings</Text>
         
+        <Text style={styles.sectionTitle}>Billing</Text>
+        <View style={styles.section}>
+          <Pressable
+            style={[styles.settingRow, styles.pressableRow]}
+            onPress={handleOpenBilling}
+          >
+            <View style={styles.settingLeft}>
+              <DollarSign size={20} color={Colors.success} />
+              <View style={styles.billingInfo}>
+                <Text style={styles.settingLabel}>Default Hourly Rate</Text>
+                {profile?.hourly_rate ? (
+                  <Text style={styles.billingValue}>
+                    {profile.currency_symbol || '$'}{profile.hourly_rate.toFixed(2)}/hr
+                  </Text>
+                ) : (
+                  <Text style={styles.billingHint}>Not set</Text>
+                )}
+              </View>
+            </View>
+            <ChevronRight size={20} color={Colors.textMuted} />
+          </Pressable>
+        </View>
+
         {biometricSupported && (
           <>
         <Text style={styles.sectionTitle}>Security</Text>
@@ -930,7 +912,6 @@ export default function SettingsScreen() {
                   </Text>
                 </View>
               </View>
-              <Zap size={20} color={Colors.success} />
             </View>
           ) : (
             // Non-subscriber view - show trial status or subscribe prompt
@@ -976,7 +957,7 @@ export default function SettingsScreen() {
           {/* Manage Subscription Button - Only for active subscribers */}
           {hasActiveSubscription && (
             <Pressable
-              style={[styles.settingRow, styles.pressableRow]}
+              style={[styles.settingRow, styles.pressableRow, styles.manageSubRow]}
               onPress={handleManageSubscription}
               disabled={isManagingSubscription}
             >
@@ -994,7 +975,7 @@ export default function SettingsScreen() {
               {isManagingSubscription ? (
                 <ActivityIndicator size="small" color={Colors.accent} />
               ) : (
-                <ExternalLink size={18} color={Colors.textMuted} />
+                <ExternalLink size={20} color={Colors.textMuted} />
               )}
             </Pressable>
           )}
@@ -1042,29 +1023,6 @@ export default function SettingsScreen() {
               )}
             </View>
           )}
-        </View>
-
-        <Text style={styles.sectionTitle}>Billing</Text>
-        <View style={styles.section}>
-          <Pressable
-            style={[styles.settingRow, styles.pressableRow]}
-            onPress={handleOpenBilling}
-          >
-            <View style={styles.settingLeft}>
-              <DollarSign size={20} color={Colors.success} />
-              <View style={styles.billingInfo}>
-                <Text style={styles.settingLabel}>Default Hourly Rate</Text>
-                {profile?.hourly_rate ? (
-                  <Text style={styles.billingValue}>
-                    {profile.currency_symbol || '$'}{profile.hourly_rate.toFixed(2)}/hr
-                  </Text>
-                ) : (
-                  <Text style={styles.billingHint}>Not set</Text>
-                )}
-              </View>
-            </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
-          </Pressable>
         </View>
 
         <Text style={styles.sectionTitle}>Account</Text>
@@ -1200,88 +1158,77 @@ export default function SettingsScreen() {
         visible={showBillingModal}
         onClose={() => setShowBillingModal(false)}
         title="Billing Settings"
-        snapPoints={["55%", "80%"]}
-        enableFullScreen={true}
+        height={65}
       >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={{ flex: 1 }}
-        >
-          <BottomSheetScrollView 
-            style={billingStyles.content} 
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Hourly Rate */}
-            <View style={billingStyles.fieldGroup}>
-              <Text style={billingStyles.fieldLabel}>Default Hourly Rate</Text>
-              <View style={billingStyles.rateInputWrapper}>
-                <Text style={billingStyles.currencyPrefix}>{selectedCurrency}</Text>
-                <TextInput
-                  style={billingStyles.rateInput}
-                  value={hourlyRateInput}
-                  onChangeText={setHourlyRateInput}
-                  placeholder="150.00"
-                  placeholderTextColor={Colors.textMuted}
-                  keyboardType="decimal-pad"
-                />
-                <Text style={billingStyles.rateSuffix}>/hr</Text>
-              </View>
-              <Text style={billingStyles.fieldHint}>
-                This rate will be used as default when marking meetings as billable
-              </Text>
-            </View>
+        {/* Hourly Rate */}
+        <View style={billingStyles.fieldGroup}>
+          <Text style={billingStyles.fieldLabel}>Default Hourly Rate</Text>
+          <View style={billingStyles.rateInputWrapper}>
+            <Text style={billingStyles.currencyPrefix}>{selectedCurrency}</Text>
+            <TextInput
+              style={billingStyles.rateInput}
+              value={hourlyRateInput}
+              onChangeText={setHourlyRateInput}
+              placeholder="150.00"
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="decimal-pad"
+            />
+            <Text style={billingStyles.rateSuffix}>/hr</Text>
+          </View>
+          <Text style={billingStyles.fieldHint}>
+            This rate will be used as default when marking meetings as billable
+          </Text>
+        </View>
 
-            {/* Currency Symbol */}
-            <View style={billingStyles.fieldGroup}>
-              <Text style={billingStyles.fieldLabel}>Currency Symbol</Text>
-              <View style={billingStyles.currencyGrid}>
-                {CURRENCY_SYMBOLS.map((currency) => (
-                  <Pressable
-                    key={currency.symbol}
-                    style={[
-                      billingStyles.currencyOption,
-                      selectedCurrency === currency.symbol && billingStyles.currencyOptionSelected,
-                    ]}
-                    onPress={() => {
-                      setSelectedCurrency(currency.symbol);
-                      if (Platform.OS !== "web") {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                  >
-                    <Text style={[
-                      billingStyles.currencySymbol,
-                      selectedCurrency === currency.symbol && billingStyles.currencySymbolSelected,
-                    ]}>
-                      {currency.symbol}
-                    </Text>
-                    <Text style={[
-                      billingStyles.currencyName,
-                      selectedCurrency === currency.symbol && billingStyles.currencyNameSelected,
-                    ]} numberOfLines={1}>
-                      {currency.name.split(' ')[0]}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            {/* Footer */}
-            <View style={billingStyles.footer}>
+        {/* Currency Symbol */}
+        <View style={billingStyles.fieldGroup}>
+          <Text style={billingStyles.fieldLabel}>Currency Symbol</Text>
+          <View style={billingStyles.currencyGrid}>
+            {CURRENCY_SYMBOLS.map((currency) => (
               <Pressable
-                style={[billingStyles.saveButton, isSavingBilling && billingStyles.saveButtonDisabled]}
-                onPress={handleSaveBilling}
-                disabled={isSavingBilling}
+                key={currency.symbol}
+                style={[
+                  billingStyles.currencyOption,
+                  selectedCurrency === currency.symbol && billingStyles.currencyOptionSelected,
+                ]}
+                onPress={() => {
+                  setSelectedCurrency(currency.symbol);
+                  if (Platform.OS !== "web") {
+                    lightImpact();
+                  }
+                }}
               >
-                {isSavingBilling ? (
-                  <ActivityIndicator size="small" color={Colors.text} />
-                ) : (
-                  <Text style={billingStyles.saveButtonText}>Save Settings</Text>
-                )}
+                <Text style={[
+                  billingStyles.currencySymbol,
+                  selectedCurrency === currency.symbol && billingStyles.currencySymbolSelected,
+                ]}>
+                  {currency.symbol}
+                </Text>
+                <Text style={[
+                  billingStyles.currencyName,
+                  selectedCurrency === currency.symbol && billingStyles.currencyNameSelected,
+                ]} numberOfLines={1}>
+                  {currency.name.split(' ')[0]}
+                </Text>
               </Pressable>
-            </View>
-          </BottomSheetScrollView>
-        </KeyboardAvoidingView>
+            ))}
+          </View>
+        </View>
+
+        {/* Footer */}
+        <View style={billingStyles.footer}>
+          <Pressable
+            style={[billingStyles.saveButton, isSavingBilling && billingStyles.saveButtonDisabled]}
+            onPress={handleSaveBilling}
+            disabled={isSavingBilling}
+          >
+            {isSavingBilling ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : (
+              <Text style={billingStyles.saveButtonText}>Save Settings</Text>
+            )}
+          </Pressable>
+        </View>
       </DraggableBottomSheet>
     </SafeAreaView>
   );
@@ -1357,6 +1304,9 @@ const styles = StyleSheet.create({
   settingValue: {
     fontSize: 16,
     color: Colors.textMuted,
+  },
+  manageSubRow: {
+    paddingRight: 24,
   },
   dangerText: {
     color: Colors.error,

@@ -18,7 +18,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { mediumImpact, successNotification } from "@/lib/haptics";
 import { useMeetingDetails, useMeetings } from "@/contexts/MeetingContext";
 import Colors from "@/constants/colors";
 import type { MeetingStatus } from "@/types";
@@ -96,9 +96,7 @@ export default function ProcessingScreen() {
   useEffect(() => {
     if (meeting?.status === "ready") {
       setTimeout(() => {
-        if (Platform.OS !== "web") {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
+        successNotification();
         router.replace(`/meeting/${meetingId}`);
       }, 1200);
     }
@@ -107,9 +105,7 @@ export default function ProcessingScreen() {
   const handleRetry = async () => {
     if (!meetingId) return;
     
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     try {
       await retryProcessing(meetingId);
@@ -121,7 +117,7 @@ export default function ProcessingScreen() {
 
   const handleViewAnyway = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.replace(`/meeting/${meetingId}`);
   };

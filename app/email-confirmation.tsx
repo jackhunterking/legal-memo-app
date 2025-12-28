@@ -11,7 +11,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, ArrowLeft, RefreshCw, CheckCircle } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { mediumImpact, successNotification, errorNotification } from "@/lib/haptics";
 import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
 
@@ -59,9 +59,7 @@ export default function EmailConfirmationScreen() {
   const handleResend = async () => {
     if (cooldown > 0 || !email) return;
     
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
     
     setIsResending(true);
     setResendSuccess(false);
@@ -77,14 +75,10 @@ export default function EmailConfirmationScreen() {
       setResendSuccess(true);
       setCooldown(60);
       
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[EmailConfirmation] Resend error:", err);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
+      errorNotification();
     } finally {
       setIsResending(false);
     }
@@ -92,7 +86,7 @@ export default function EmailConfirmationScreen() {
 
   const handleBackToSignIn = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.replace("/auth");
   };

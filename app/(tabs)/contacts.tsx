@@ -17,7 +17,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Search, Plus, User, Building2, ChevronRight, Tag, X, Check, Filter } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useContacts } from "@/contexts/ContactContext";
 import type { ContactWithCategory, ContactCategory } from "@/types";
 import { formatContactName, getContactInitials } from "@/types";
@@ -329,29 +329,27 @@ export default function ContactsScreen() {
   }, [isContactsRefreshing]);
 
   const handleRefresh = useCallback(() => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
     refetchContacts();
   }, [refetchContacts]);
 
   const handleContactPress = (contact: ContactWithCategory) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.push(`/contact/${contact.id}`);
   };
 
   const handleAddContact = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.push("/edit-contact");
   };
 
   const handleFilterSelect = (categoryId: string | null) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setFilterCategoryId(categoryId);
     setShowFilterModal(false);
@@ -359,7 +357,7 @@ export default function ContactsScreen() {
 
   const handleClearFilter = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setFilterCategoryId(null);
   };

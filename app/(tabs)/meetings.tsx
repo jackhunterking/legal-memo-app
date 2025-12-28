@@ -14,7 +14,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Search, Clock, AlertCircle, CheckCircle, Loader, DollarSign, Lock } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact } from "@/lib/haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUsage } from "@/contexts/UsageContext";
@@ -278,15 +278,13 @@ export default function MeetingsScreen() {
   }, [isRefreshing]);
 
   const handleRefresh = useCallback(() => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
     refetchMeetings();
   }, [refetchMeetings]);
 
   const handleMeetingPress = (meeting: MeetingWithContact) => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     
     // If trial expired and no subscription, navigate to subscription page

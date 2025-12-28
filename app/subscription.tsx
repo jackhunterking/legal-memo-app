@@ -46,7 +46,7 @@ import {
   Lock,
   CheckCircle,
 } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useUsage } from "@/contexts/UsageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -244,7 +244,7 @@ export default function SubscriptionScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     
     await refreshUsage();
@@ -259,7 +259,7 @@ export default function SubscriptionScreen() {
     if (!closeButtonEnabled && !hasProEntitlement) return;
     
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     router.back();
   }, [closeButtonEnabled, hasProEntitlement, router]);
@@ -269,7 +269,7 @@ export default function SubscriptionScreen() {
    */
   const handleSubscribe = useCallback(async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      mediumImpact();
     }
 
     // Apple requires disclosure before linking to external payment
@@ -352,7 +352,7 @@ export default function SubscriptionScreen() {
    */
   const handleManageSubscription = useCallback(async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
 
     setIsProcessing(true);
@@ -411,7 +411,7 @@ export default function SubscriptionScreen() {
    */
   const handleRestorePurchase = useCallback(async () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     
     setIsRefreshing(true);
@@ -434,7 +434,7 @@ export default function SubscriptionScreen() {
    */
   const handleTerms = useCallback(() => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     Linking.openURL("https://legalmemo.app/terms");
   }, []);
@@ -444,7 +444,7 @@ export default function SubscriptionScreen() {
    */
   const handlePrivacy = useCallback(() => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     Linking.openURL("https://legalmemo.app/privacy");
   }, []);

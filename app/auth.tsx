@@ -14,7 +14,7 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, Lock, Eye, EyeOff, Fingerprint, Gift } from "lucide-react-native";
 import { SUBSCRIPTION_PLAN } from "@/types";
-import * as Haptics from "expo-haptics";
+import { lightImpact, mediumImpact } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, authenticateWithBiometrics, getBiometricCredentials, saveBiometricCredentials } from "@/lib/biometrics";
@@ -100,9 +100,7 @@ export default function AuthScreen() {
 
     setError("");
     
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    mediumImpact();
 
     try {
       if (isLogin) {
@@ -133,7 +131,7 @@ export default function AuthScreen() {
 
   const toggleMode = () => {
     if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      lightImpact();
     }
     setIsLogin(!isLogin);
     setError("");
