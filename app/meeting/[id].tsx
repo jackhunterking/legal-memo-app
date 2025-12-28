@@ -26,6 +26,7 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import * as Linking from "expo-linking";
 import {
   useAudioPlayer,
   useAudioPlayerStatus,
@@ -58,7 +59,7 @@ import {
   ExternalLink,
   Flag,
 } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { lightImpact, successNotification } from "@/lib/haptics";
 import { useMeetingDetails, useMeetings, useMeetingShares } from "@/contexts/MeetingContext";
 import { useContacts } from "@/contexts/ContactContext";
 import { useUsage } from "@/contexts/UsageContext";
@@ -106,7 +107,6 @@ import { User, Plus, DollarSign } from "lucide-react-native";
 import { useAuth } from "@/contexts/AuthContext";
 import { Switch } from "react-native";
 import DraggableBottomSheet from "@/components/DraggableBottomSheet";
-import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 
 /**
  * Format speaker label from "A", "B", "C" to "Speaker A", "Speaker B", "Speaker C"
@@ -169,54 +169,51 @@ const TranscriptBottomSheet = ({
       visible={visible}
       onClose={onClose}
       title="Transcript"
-      snapPoints={["60%", "95%"]}
-      enableFullScreen={true}
+      height={92}
     >
+      {/* Search Bar */}
       <View style={styles.transcriptSearchContainer}>
-        <Search size={18} color="#9ca3af" />
+        <Search size={18} color={Colors.textMuted} />
         <TextInput
           style={styles.transcriptSearchInput}
           placeholder="Search in transcript..."
-          placeholderTextColor="#6b7280"
+          placeholderTextColor={Colors.textMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         {searchQuery.length > 0 && (
           <Pressable onPress={() => setSearchQuery("")}>
-            <X size={18} color="#9ca3af" />
+            <X size={18} color={Colors.textMuted} />
           </Pressable>
         )}
       </View>
 
-      <BottomSheetScrollView style={styles.bottomSheetContent} showsVerticalScrollIndicator={false}>
-        {filteredSegments.length > 0 ? (
-          filteredSegments.map((segment) => (
-            <Pressable
-              key={segment.id}
-              style={styles.transcriptSegmentCard}
-              onPress={() => {
-                if (onSeek) onSeek(segment.start_ms);
-                if (Platform.OS !== "web") {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-              }}
-            >
-              <View style={[styles.segmentAccentBar, { backgroundColor: getSpeakerColors(segment.speaker).accent }]} />
-              <View style={styles.segmentContent}>
-                <Text style={[styles.transcriptSpeakerLabel, { color: getSpeakerColors(segment.speaker).text }]}>
-                  {formatSpeakerLabel(segment.speaker)}
-                </Text>
-                <Text style={styles.transcriptSegmentText}>{segment.text}</Text>
-                <Text style={styles.transcriptTimestamp}>{formatTimestamp(segment.start_ms)}</Text>
-              </View>
-            </Pressable>
-          ))
-        ) : (
-          <Text style={styles.noDataText}>
-            {searchQuery.trim() ? "No matches found" : "No transcript available"}
-          </Text>
-        )}
-      </BottomSheetScrollView>
+      {/* Transcript Segments */}
+      {filteredSegments.length > 0 ? (
+        filteredSegments.map((segment) => (
+          <Pressable
+            key={segment.id}
+            style={styles.transcriptSegmentCard}
+            onPress={() => {
+              if (onSeek) onSeek(segment.start_ms);
+              lightImpact();
+            }}
+          >
+            <View style={[styles.segmentAccentBar, { backgroundColor: getSpeakerColors(segment.speaker).accent }]} />
+            <View style={styles.segmentContent}>
+              <Text style={[styles.transcriptSpeakerLabel, { color: getSpeakerColors(segment.speaker).text }]}>
+                {formatSpeakerLabel(segment.speaker)}
+              </Text>
+              <Text style={styles.transcriptSegmentText}>{segment.text}</Text>
+              <Text style={styles.transcriptTimestamp}>{formatTimestamp(segment.start_ms)}</Text>
+            </View>
+          </Pressable>
+        ))
+      ) : (
+        <Text style={styles.noDataText}>
+          {searchQuery.trim() ? "No matches found" : "No transcript available"}
+        </Text>
+      )}
     </DraggableBottomSheet>
   );
 };
@@ -247,67 +244,59 @@ const TypeSelectorModal = ({
       visible={visible}
       onClose={onClose}
       title="Meeting Type"
-      snapPoints={["50%", "85%"]}
-      enableFullScreen={true}
+      height={60}
     >
-      {/* Scrollable Content */}
-      <BottomSheetScrollView 
-        style={typeSelectorStyles.scrollContent} 
-        contentContainerStyle={typeSelectorStyles.scrollContentContainer}
-        showsVerticalScrollIndicator={false}
+      {/* No Type Option */}
+      <Pressable
+        style={[
+          typeSelectorStyles.typeOption,
+          currentTypeId === null && typeSelectorStyles.typeOptionSelected,
+        ]}
+        onPress={() => onSelect(null)}
+        disabled={isUpdating}
       >
-        {/* No Type Option */}
+        <View style={typeSelectorStyles.typeLeft}>
+          <View style={[typeSelectorStyles.typeDot, { backgroundColor: Colors.textMuted }]} />
+          <Text style={typeSelectorStyles.typeName}>No Type</Text>
+        </View>
+        {currentTypeId === null && (
+          <Check size={20} color={Colors.accentLight} />
+        )}
+      </Pressable>
+
+      {/* Type Options */}
+      {types.map((type) => (
         <Pressable
+          key={type.id}
           style={[
             typeSelectorStyles.typeOption,
-            currentTypeId === null && typeSelectorStyles.typeOptionSelected,
+            currentTypeId === type.id && typeSelectorStyles.typeOptionSelected,
           ]}
-          onPress={() => onSelect(null)}
+          onPress={() => onSelect(type.id)}
           disabled={isUpdating}
         >
           <View style={typeSelectorStyles.typeLeft}>
-            <View style={[typeSelectorStyles.typeDot, { backgroundColor: Colors.textMuted }]} />
-            <Text style={typeSelectorStyles.typeName}>No Type</Text>
+            <View style={[typeSelectorStyles.typeDot, { backgroundColor: type.color }]} />
+            <Text style={typeSelectorStyles.typeName}>{type.name}</Text>
           </View>
-          {currentTypeId === null && (
+          {currentTypeId === type.id && (
             <Check size={20} color={Colors.accentLight} />
           )}
         </Pressable>
+      ))}
 
-        {/* Type Options */}
-        {types.map((type) => (
-          <Pressable
-            key={type.id}
-            style={[
-              typeSelectorStyles.typeOption,
-              currentTypeId === type.id && typeSelectorStyles.typeOptionSelected,
-            ]}
-            onPress={() => onSelect(type.id)}
-            disabled={isUpdating}
-          >
-            <View style={typeSelectorStyles.typeLeft}>
-              <View style={[typeSelectorStyles.typeDot, { backgroundColor: type.color }]} />
-              <Text style={typeSelectorStyles.typeName}>{type.name}</Text>
-            </View>
-            {currentTypeId === type.id && (
-              <Check size={20} color={Colors.accentLight} />
-            )}
-          </Pressable>
-        ))}
-
-        {/* Footer Button */}
-        <View style={typeSelectorStyles.footer}>
-          <Pressable
-            style={typeSelectorStyles.manageTypesButton}
-            onPress={onManageTypes}
-          >
-            <Text style={typeSelectorStyles.manageTypesText}>
-              Add or Edit Types in Settings
-            </Text>
-            <ChevronRight size={18} color={Colors.accentLight} />
-          </Pressable>
-        </View>
-      </BottomSheetScrollView>
+      {/* Footer Button */}
+      <View style={typeSelectorStyles.footer}>
+        <Pressable
+          style={typeSelectorStyles.manageTypesButton}
+          onPress={onManageTypes}
+        >
+          <Text style={typeSelectorStyles.manageTypesText}>
+            Add or Edit Types in Settings
+          </Text>
+          <ChevronRight size={18} color={Colors.accentLight} />
+        </Pressable>
+      </View>
 
       {isUpdating && (
         <View style={typeSelectorStyles.loadingOverlay}>
@@ -354,105 +343,97 @@ const ContactSelectorModal = ({
       visible={visible}
       onClose={onClose}
       title="Contact"
-      snapPoints={["60%", "90%"]}
-      enableFullScreen={true}
+      height={75}
     >
       {/* Search */}
       <View style={contactSelectorStyles.searchContainer}>
-        <Search size={18} color="#9ca3af" />
+        <Search size={18} color={Colors.textMuted} />
         <TextInput
           style={contactSelectorStyles.searchInput}
           placeholder="Search contacts..."
-          placeholderTextColor="#6b7280"
+          placeholderTextColor={Colors.textMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         {searchQuery.length > 0 && (
           <Pressable onPress={() => setSearchQuery("")}>
-            <X size={18} color="#9ca3af" />
+            <X size={18} color={Colors.textMuted} />
           </Pressable>
         )}
       </View>
 
-      {/* Scrollable Content */}
-      <BottomSheetScrollView 
-        style={contactSelectorStyles.scrollContent} 
-        contentContainerStyle={contactSelectorStyles.scrollContentContainer}
-        showsVerticalScrollIndicator={false}
+      {/* No Contact Option */}
+      <Pressable
+        style={[
+          contactSelectorStyles.contactOption,
+          currentContactId === null && contactSelectorStyles.contactOptionSelected,
+        ]}
+        onPress={() => onSelect(null)}
+        disabled={isUpdating}
       >
-        {/* No Contact Option */}
+        <View style={contactSelectorStyles.contactLeft}>
+          <View style={[contactSelectorStyles.contactAvatar, { backgroundColor: Colors.textMuted }]}>
+            <User size={16} color="#fff" />
+          </View>
+          <Text style={contactSelectorStyles.contactName}>No Contact</Text>
+        </View>
+        {currentContactId === null && (
+          <Check size={20} color={Colors.accentLight} />
+        )}
+      </Pressable>
+
+      {/* Contact Options */}
+      {filteredContacts.map((contact) => (
         <Pressable
+          key={contact.id}
           style={[
             contactSelectorStyles.contactOption,
-            currentContactId === null && contactSelectorStyles.contactOptionSelected,
+            currentContactId === contact.id && contactSelectorStyles.contactOptionSelected,
           ]}
-          onPress={() => onSelect(null)}
+          onPress={() => onSelect(contact.id)}
           disabled={isUpdating}
         >
           <View style={contactSelectorStyles.contactLeft}>
-            <View style={[contactSelectorStyles.contactAvatar, { backgroundColor: Colors.textMuted }]}>
-              <User size={16} color="#fff" />
+            <View style={[contactSelectorStyles.contactAvatar, { backgroundColor: contact.category?.color || Colors.accentLight }]}>
+              <Text style={contactSelectorStyles.contactInitials}>
+                {getContactInitials(contact)}
+              </Text>
             </View>
-            <Text style={contactSelectorStyles.contactName}>No Contact</Text>
+            <View style={contactSelectorStyles.contactInfo}>
+              <Text style={contactSelectorStyles.contactName}>{formatContactName(contact)}</Text>
+              {contact.category && (
+                <View style={contactSelectorStyles.contactCategoryRow}>
+                  <View style={[contactSelectorStyles.contactCategoryDot, { backgroundColor: contact.category.color }]} />
+                  <Text style={contactSelectorStyles.contactCategory}>{contact.category.name}</Text>
+                </View>
+              )}
+              {contact.company && (
+                <Text style={contactSelectorStyles.contactCompany}>{contact.company}</Text>
+              )}
+            </View>
           </View>
-          {currentContactId === null && (
+          {currentContactId === contact.id && (
             <Check size={20} color={Colors.accentLight} />
           )}
         </Pressable>
+      ))}
 
-        {/* Contact Options */}
-        {filteredContacts.map((contact) => (
-          <Pressable
-            key={contact.id}
-            style={[
-              contactSelectorStyles.contactOption,
-              currentContactId === contact.id && contactSelectorStyles.contactOptionSelected,
-            ]}
-            onPress={() => onSelect(contact.id)}
-            disabled={isUpdating}
-          >
-            <View style={contactSelectorStyles.contactLeft}>
-              <View style={[contactSelectorStyles.contactAvatar, { backgroundColor: contact.category?.color || Colors.accentLight }]}>
-                <Text style={contactSelectorStyles.contactInitials}>
-                  {getContactInitials(contact)}
-                </Text>
-              </View>
-              <View style={contactSelectorStyles.contactInfo}>
-                <Text style={contactSelectorStyles.contactName}>{formatContactName(contact)}</Text>
-                {contact.category && (
-                  <View style={contactSelectorStyles.contactCategoryRow}>
-                    <View style={[contactSelectorStyles.contactCategoryDot, { backgroundColor: contact.category.color }]} />
-                    <Text style={contactSelectorStyles.contactCategory}>{contact.category.name}</Text>
-                  </View>
-                )}
-                {contact.company && (
-                  <Text style={contactSelectorStyles.contactCompany}>{contact.company}</Text>
-                )}
-              </View>
-            </View>
-            {currentContactId === contact.id && (
-              <Check size={20} color={Colors.accentLight} />
-            )}
-          </Pressable>
-        ))}
+      {filteredContacts.length === 0 && searchQuery.trim() && (
+        <Text style={contactSelectorStyles.noResults}>No contacts found</Text>
+      )}
 
-        {filteredContacts.length === 0 && searchQuery.trim() && (
-          <Text style={contactSelectorStyles.noResults}>No contacts found</Text>
-        )}
-
-        {/* Footer Button */}
-        <View style={contactSelectorStyles.footer}>
-          <Pressable
-            style={contactSelectorStyles.addContactButton}
-            onPress={onAddContact}
-          >
-            <Plus size={18} color={Colors.accentLight} />
-            <Text style={contactSelectorStyles.addContactText}>
-              Add New Contact
-            </Text>
-          </Pressable>
-        </View>
-      </BottomSheetScrollView>
+      {/* Footer Button */}
+      <View style={contactSelectorStyles.footer}>
+        <Pressable
+          style={contactSelectorStyles.addContactButton}
+          onPress={onAddContact}
+        >
+          <Plus size={18} color={Colors.accentLight} />
+          <Text style={contactSelectorStyles.addContactText}>
+            Add New Contact
+          </Text>
+        </Pressable>
+      </View>
 
       {isUpdating && (
         <View style={contactSelectorStyles.loadingOverlay}>
@@ -605,173 +586,158 @@ const BillableEditorModal = ({
       visible={visible}
       onClose={onClose}
       title="Edit Billing"
-      snapPoints={["75%", "95%"]}
-      enableFullScreen={true}
-      showCloseButton={true}
+      height={85}
     >
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        {currentRate === 0 && (
-          <Text style={billableStyles.headerSubtext}>
-            Set an hourly rate to calculate billing amount
-          </Text>
+      {currentRate === 0 && (
+        <Text style={billableStyles.headerSubtext}>
+          Set an hourly rate to calculate billing amount
+        </Text>
+      )}
+
+      {/* Recorded Duration - Prominent Display */}
+      <View style={billableStyles.recordedSection}>
+        <Text style={billableStyles.recordedLabel}>Recorded Duration</Text>
+        <Text style={billableStyles.recordedValue}>
+          {formatDurationForBilling(meeting.duration_seconds)}
+        </Text>
+      </View>
+
+      {/* Time Input - Hours and Minutes */}
+      <View style={billableStyles.fieldGroup}>
+        <Text style={billableStyles.fieldLabel}>Billable Time</Text>
+        <View style={billableStyles.timeInputRow}>
+          <View style={billableStyles.timeInputContainer}>
+            <TextInput
+              style={billableStyles.timeInput}
+              value={hoursInput}
+              onChangeText={handleHoursChange}
+              placeholder="0"
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="number-pad"
+              maxLength={3}
+            />
+            <Text style={billableStyles.timeLabel}>hours</Text>
+          </View>
+          <Text style={billableStyles.timeSeparator}>:</Text>
+          <View style={billableStyles.timeInputContainer}>
+            <TextInput
+              style={billableStyles.timeInput}
+              value={minutesInput}
+              onChangeText={handleMinutesChange}
+              placeholder="0"
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="number-pad"
+              maxLength={2}
+            />
+            <Text style={billableStyles.timeLabel}>minutes</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Hourly Rate Section */}
+      <View style={billableStyles.fieldGroup}>
+        <Text style={billableStyles.fieldLabel}>Hourly Rate</Text>
+        
+        {/* Rate Option Tabs */}
+        <View style={billableStyles.rateOptionTabs}>
+          <Pressable
+            style={[
+              billableStyles.rateOptionTab,
+              useDefaultRate && billableStyles.rateOptionTabActive,
+            ]}
+            onPress={() => handleRateToggle(true)}
+          >
+            <Text style={[
+              billableStyles.rateOptionTabText,
+              useDefaultRate && billableStyles.rateOptionTabTextActive,
+            ]}>
+              Default
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[
+              billableStyles.rateOptionTab,
+              !useDefaultRate && billableStyles.rateOptionTabActive,
+            ]}
+            onPress={() => handleRateToggle(false)}
+          >
+            <Text style={[
+              billableStyles.rateOptionTabText,
+              !useDefaultRate && billableStyles.rateOptionTabTextActive,
+            ]}>
+              Custom
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Default Rate Display */}
+        {useDefaultRate && (
+          <View style={billableStyles.defaultRateDisplay}>
+            {hourlyRate ? (
+              <Text style={billableStyles.defaultRateValue}>
+                {formatCurrency(hourlyRate, currencySymbol)}/hr
+              </Text>
+            ) : (
+              <Pressable
+                style={billableStyles.setDefaultRateButton}
+                onPress={() => {
+                  onClose();
+                  onNavigateToSettings();
+                }}
+              >
+                <Text style={billableStyles.setDefaultRateText}>
+                  Set Default Hourly Rate
+                </Text>
+                <ChevronRight size={18} color={Colors.accentLight} />
+              </Pressable>
+            )}
+          </View>
         )}
 
-        {/* Content */}
-        <BottomSheetScrollView 
-          style={billableStyles.scrollContent}
-          contentContainerStyle={billableStyles.scrollContentContainer}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+        {/* Manual Rate Input */}
+        {!useDefaultRate && (
+          <View style={billableStyles.rateInputWrapper}>
+            <Text style={billableStyles.currencyPrefix}>{currencySymbol}</Text>
+            <TextInput
+              style={billableStyles.rateInput}
+              value={manualRateInput}
+              onChangeText={handleManualRateChange}
+              placeholder="0.00"
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="decimal-pad"
+            />
+            <Text style={billableStyles.rateSuffix}>/hr</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Preview Card - Auto-calculated (only show when rate is set) */}
+      {totalHours > 0 && calculatedAmount > 0 && (
+        <View style={billableStyles.previewCard}>
+          <Text style={billableStyles.previewLabel}>Total Amount</Text>
+          <Text style={billableStyles.previewAmount}>
+            {formatCurrency(calculatedAmount, currencySymbol)}
+          </Text>
+          <Text style={billableStyles.previewCalculation}>
+            {calculationText}
+          </Text>
+        </View>
+      )}
+
+      {/* Save Button */}
+      <View style={billableStyles.footerInScroll}>
+        <Pressable
+          style={[billableStyles.saveButton, isSaving && billableStyles.saveButtonDisabled]}
+          onPress={handleSave}
+          disabled={isSaving}
         >
-              {/* Recorded Duration - Prominent Display */}
-              <View style={billableStyles.recordedSection}>
-                <Text style={billableStyles.recordedLabel}>Recorded Duration</Text>
-                <Text style={billableStyles.recordedValue}>
-                  {formatDurationForBilling(meeting.duration_seconds)}
-                </Text>
-              </View>
-
-              {/* Time Input - Hours and Minutes */}
-              <View style={billableStyles.fieldGroup}>
-                <Text style={billableStyles.fieldLabel}>Billable Time</Text>
-                <View style={billableStyles.timeInputRow}>
-                  <View style={billableStyles.timeInputContainer}>
-                    <TextInput
-                      style={billableStyles.timeInput}
-                      value={hoursInput}
-                      onChangeText={handleHoursChange}
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="number-pad"
-                      maxLength={3}
-                    />
-                    <Text style={billableStyles.timeLabel}>hours</Text>
-                  </View>
-                  <Text style={billableStyles.timeSeparator}>:</Text>
-                  <View style={billableStyles.timeInputContainer}>
-                    <TextInput
-                      style={billableStyles.timeInput}
-                      value={minutesInput}
-                      onChangeText={handleMinutesChange}
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="number-pad"
-                      maxLength={2}
-                    />
-                    <Text style={billableStyles.timeLabel}>minutes</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Hourly Rate Section */}
-              <View style={billableStyles.fieldGroup}>
-                <Text style={billableStyles.fieldLabel}>Hourly Rate</Text>
-                
-                {/* Rate Option Tabs */}
-                <View style={billableStyles.rateOptionTabs}>
-                  <Pressable
-                    style={[
-                      billableStyles.rateOptionTab,
-                      useDefaultRate && billableStyles.rateOptionTabActive,
-                    ]}
-                    onPress={() => handleRateToggle(true)}
-                  >
-                    <Text style={[
-                      billableStyles.rateOptionTabText,
-                      useDefaultRate && billableStyles.rateOptionTabTextActive,
-                    ]}>
-                      Default
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      billableStyles.rateOptionTab,
-                      !useDefaultRate && billableStyles.rateOptionTabActive,
-                    ]}
-                    onPress={() => handleRateToggle(false)}
-                  >
-                    <Text style={[
-                      billableStyles.rateOptionTabText,
-                      !useDefaultRate && billableStyles.rateOptionTabTextActive,
-                    ]}>
-                      Custom
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {/* Default Rate Display */}
-                {useDefaultRate && (
-                  <View style={billableStyles.defaultRateDisplay}>
-                    {hourlyRate ? (
-                      <Text style={billableStyles.defaultRateValue}>
-                        {formatCurrency(hourlyRate, currencySymbol)}/hr
-                      </Text>
-                    ) : (
-                      <Pressable
-                        style={billableStyles.setDefaultRateButton}
-                        onPress={() => {
-                          onClose();
-                          onNavigateToSettings();
-                        }}
-                      >
-                        <Text style={billableStyles.setDefaultRateText}>
-                          Set Default Hourly Rate
-                        </Text>
-                        <ChevronRight size={18} color={Colors.accentLight} />
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-
-                {/* Manual Rate Input */}
-                {!useDefaultRate && (
-                  <View style={billableStyles.rateInputWrapper}>
-                    <Text style={billableStyles.currencyPrefix}>{currencySymbol}</Text>
-                    <TextInput
-                      style={billableStyles.rateInput}
-                      value={manualRateInput}
-                      onChangeText={handleManualRateChange}
-                      placeholder="0.00"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="decimal-pad"
-                    />
-                    <Text style={billableStyles.rateSuffix}>/hr</Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Preview Card - Auto-calculated (only show when rate is set) */}
-              {totalHours > 0 && calculatedAmount > 0 && (
-                <View style={billableStyles.previewCard}>
-                  <Text style={billableStyles.previewLabel}>Total Amount</Text>
-                  <Text style={billableStyles.previewAmount}>
-                    {formatCurrency(calculatedAmount, currencySymbol)}
-                  </Text>
-                  <Text style={billableStyles.previewCalculation}>
-                    {calculationText}
-                  </Text>
-                </View>
-              )}
-
-              {/* Save Button - Inside ScrollView */}
-              <View style={billableStyles.footerInScroll}>
-                <Pressable
-                  style={[billableStyles.saveButton, isSaving && billableStyles.saveButtonDisabled]}
-                  onPress={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={Colors.text} />
-                  ) : (
-                    <Text style={billableStyles.saveButtonText}>Save Changes</Text>
-                  )}
-                </Pressable>
-              </View>
-        </BottomSheetScrollView>
-      </KeyboardAvoidingView>
+          {isSaving ? (
+            <ActivityIndicator size="small" color={Colors.text} />
+          ) : (
+            <Text style={billableStyles.saveButtonText}>Save Changes</Text>
+          )}
+        </Pressable>
+      </View>
     </DraggableBottomSheet>
   );
 };
@@ -845,98 +811,88 @@ const SpeakerFeedbackModal = ({
       visible={visible}
       onClose={onClose}
       title="Report Issue"
-      snapPoints={["70%", "90%"]}
-      enableFullScreen={true}
+      height={75}
     >
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        {submitted ? (
-          <View style={feedbackStyles.successContainer}>
-            <View style={feedbackStyles.successIcon}>
-              <Check size={32} color={Colors.success} />
-            </View>
-            <Text style={feedbackStyles.successTitle}>Thank You!</Text>
-            <Text style={feedbackStyles.successMessage}>
-              Your feedback helps us improve speaker detection accuracy.
-            </Text>
+      {submitted ? (
+        <View style={feedbackStyles.successContainer}>
+          <View style={feedbackStyles.successIcon}>
+            <Check size={32} color={Colors.success} />
           </View>
-        ) : (
-          <BottomSheetScrollView 
-            contentContainerStyle={feedbackStyles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Speaker info */}
-            {meeting.detected_speakers !== null && (
-              <View style={feedbackStyles.infoCard}>
-                <Text style={feedbackStyles.infoLabel}>Speaker Detection</Text>
-                <Text style={feedbackStyles.infoValue}>
-                  Expected: {meeting.expected_speakers} | Detected: {meeting.detected_speakers}
-                </Text>
-              </View>
-            )}
-
-            {/* Feedback type selection */}
-            <Text style={feedbackStyles.sectionLabel}>What's the issue? (optional)</Text>
-            <View style={feedbackStyles.optionsContainer}>
-              {feedbackOptions.map((option) => (
-                <Pressable
-                  key={option.id}
-                  style={[
-                    feedbackStyles.optionButton,
-                    selectedType === option.id && feedbackStyles.optionButtonSelected,
-                  ]}
-                  onPress={() => setSelectedType(option.id)}
-                >
-                  <View style={[
-                    feedbackStyles.radioOuter,
-                    selectedType === option.id && feedbackStyles.radioOuterSelected,
-                  ]}>
-                    {selectedType === option.id && <View style={feedbackStyles.radioInner} />}
-                  </View>
-                  <Text style={[
-                    feedbackStyles.optionText,
-                    selectedType === option.id && feedbackStyles.optionTextSelected,
-                  ]}>
-                    {option.label}
-                  </Text>
-                </Pressable>
-              ))}
+          <Text style={feedbackStyles.successTitle}>Thank You!</Text>
+          <Text style={feedbackStyles.successMessage}>
+            Your feedback helps us improve speaker detection accuracy.
+          </Text>
+        </View>
+      ) : (
+        <>
+          {/* Speaker info */}
+          {meeting.detected_speakers !== null && (
+            <View style={feedbackStyles.infoCard}>
+              <Text style={feedbackStyles.infoLabel}>Speaker Detection</Text>
+              <Text style={feedbackStyles.infoValue}>
+                Expected: {meeting.expected_speakers} | Detected: {meeting.detected_speakers}
+              </Text>
             </View>
+          )}
 
-            {/* Notes input */}
-            <Text style={feedbackStyles.sectionLabel}>Additional notes (optional)</Text>
-            <TextInput
-              style={feedbackStyles.notesInput}
-              placeholder="Describe the issue..."
-              placeholderTextColor={Colors.textMuted}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
+          {/* Feedback type selection */}
+          <Text style={feedbackStyles.sectionLabel}>What's the issue? (optional)</Text>
+          <View style={feedbackStyles.optionsContainer}>
+            {feedbackOptions.map((option) => (
+              <Pressable
+                key={option.id}
+                style={[
+                  feedbackStyles.optionButton,
+                  selectedType === option.id && feedbackStyles.optionButtonSelected,
+                ]}
+                onPress={() => setSelectedType(option.id)}
+              >
+                <View style={[
+                  feedbackStyles.radioOuter,
+                  selectedType === option.id && feedbackStyles.radioOuterSelected,
+                ]}>
+                  {selectedType === option.id && <View style={feedbackStyles.radioInner} />}
+                </View>
+                <Text style={[
+                  feedbackStyles.optionText,
+                  selectedType === option.id && feedbackStyles.optionTextSelected,
+                ]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
-            {/* Submit button */}
-            <Pressable
-              style={[
-                feedbackStyles.submitButton,
-                ((!selectedType && notes.trim().length === 0) || isSubmitting) && feedbackStyles.submitButtonDisabled,
-              ]}
-              onPress={handleSubmit}
-              disabled={(!selectedType && notes.trim().length === 0) || isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator size="small" color={Colors.text} />
-              ) : (
-                <Text style={feedbackStyles.submitButtonText}>Submit Feedback</Text>
-              )}
-            </Pressable>
-          </BottomSheetScrollView>
-        )}
-      </KeyboardAvoidingView>
+          {/* Notes input */}
+          <Text style={feedbackStyles.sectionLabel}>Additional notes (optional)</Text>
+          <TextInput
+            style={feedbackStyles.notesInput}
+            placeholder="Describe the issue..."
+            placeholderTextColor={Colors.textMuted}
+            value={notes}
+            onChangeText={setNotes}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+
+          {/* Submit button */}
+          <Pressable
+            style={[
+              feedbackStyles.submitButton,
+              ((!selectedType && notes.trim().length === 0) || isSubmitting) && feedbackStyles.submitButtonDisabled,
+            ]}
+            onPress={handleSubmit}
+            disabled={(!selectedType && notes.trim().length === 0) || isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : (
+              <Text style={feedbackStyles.submitButtonText}>Submit Feedback</Text>
+            )}
+          </Pressable>
+        </>
+      )}
     </DraggableBottomSheet>
   );
 };
@@ -1131,8 +1087,7 @@ const QuickActionsMenu = ({
       visible={visible}
       onClose={onClose}
       title="Quick Actions"
-      snapPoints={["35%", "50%"]}
-      enableFullScreen={false}
+      height={40}
     >
       <View style={quickActionsStyles.actionsList}>
         <Pressable 
@@ -1195,7 +1150,7 @@ const QuickActionsMenu = ({
 
 /**
  * Edit Name Modal Component
- * Bottom sheet for editing meeting title
+ * Centered modal for editing meeting title
  */
 const EditNameModal = ({
   visible,
@@ -1226,25 +1181,28 @@ const EditNameModal = ({
   };
 
   return (
-    <DraggableBottomSheet
+    <Modal
       visible={visible}
-      onClose={onClose}
-      title="Edit Meeting Name"
-      snapPoints={["30%", "50%"]}
-      enableFullScreen={false}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
     >
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
+        style={editNameStyles.overlay}
       >
-        <View style={{ flex: 1, paddingTop: 8 }}>
+        <Pressable style={editNameStyles.backdrop} onPress={onClose} />
+        <View style={editNameStyles.container}>
+          <Text style={editNameStyles.title}>Edit Meeting Name</Text>
           <TextInput
             style={editNameStyles.input}
             value={title}
             onChangeText={setTitle}
             placeholder="Enter meeting name"
-            placeholderTextColor="#6b7280"
+            placeholderTextColor={Colors.textMuted}
             autoFocus
+            returnKeyType="done"
+            onSubmitEditing={handleSave}
           />
           <View style={editNameStyles.buttonRow}>
             <Pressable 
@@ -1271,7 +1229,7 @@ const EditNameModal = ({
           </View>
         </View>
       </KeyboardAvoidingView>
-    </DraggableBottomSheet>
+    </Modal>
   );
 };
 
@@ -1342,9 +1300,7 @@ const ShareMeetingModal = ({
       const success = await copyToClipboard(url);
       if (success) {
         setCopiedId(shareId);
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
+        successNotification();
         // Reset copied state after 2 seconds
         setTimeout(() => setCopiedId(null), 2000);
       }
@@ -1357,7 +1313,6 @@ const ShareMeetingModal = ({
     if (Platform.OS === 'web') {
       window.open(url, '_blank');
     } else {
-      const { Linking } = await import('react-native');
       await Linking.openURL(url);
     }
   };
@@ -1394,180 +1349,173 @@ const ShareMeetingModal = ({
       visible={visible}
       onClose={onClose}
       title="Share Meeting"
-      snapPoints={["65%", "95%"]}
-      enableFullScreen={true}
+      height={85}
     >
-      <BottomSheetScrollView 
-        style={shareModalStyles.content}
-        contentContainerStyle={shareModalStyles.contentContainer}
-        showsVerticalScrollIndicator={false}
-      >
-            {/* New Share Link Section */}
-            <View style={shareModalStyles.section}>
-              <Text style={shareModalStyles.sectionTitle}>Create New Link</Text>
-              <Text style={shareModalStyles.sectionSubtitle}>
-                Anyone with the link can view "{meetingTitle}"
-              </Text>
+      {/* New Share Link Section */}
+      <View style={shareModalStyles.section}>
+        <Text style={shareModalStyles.sectionTitle}>Create New Link</Text>
+        <Text style={shareModalStyles.sectionSubtitle}>
+          Anyone with the link can view "{meetingTitle}"
+        </Text>
 
-              {/* Password Toggle */}
-              <View style={shareModalStyles.passwordRow}>
-                <View style={shareModalStyles.passwordLeft}>
-                  <Lock size={18} color={Colors.textMuted} />
-                  <Text style={shareModalStyles.passwordLabel}>Password Protection</Text>
+        {/* Password Toggle */}
+        <View style={shareModalStyles.passwordRow}>
+          <View style={shareModalStyles.passwordLeft}>
+            <Lock size={18} color={Colors.textMuted} />
+            <Text style={shareModalStyles.passwordLabel}>Password Protection</Text>
+          </View>
+          <Switch
+            value={usePassword}
+            onValueChange={setUsePassword}
+            trackColor={{ false: Colors.border, true: Colors.accentLight + '80' }}
+            thumbColor={usePassword ? Colors.accentLight : Colors.textMuted}
+          />
+        </View>
+
+        {/* Password Input */}
+        {usePassword && (
+          <View style={shareModalStyles.passwordInputContainer}>
+            <TextInput
+              style={shareModalStyles.passwordInput}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Enter password"
+              placeholderTextColor={Colors.textMuted}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+            />
+            <Pressable 
+              style={shareModalStyles.passwordToggle}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? (
+                <EyeOff size={20} color={Colors.textMuted} />
+              ) : (
+                <Eye size={20} color={Colors.textMuted} />
+              )}
+            </Pressable>
+          </View>
+        )}
+
+        {/* Create Button */}
+        <Pressable
+          style={[
+            shareModalStyles.createButton,
+            (isCreating || (usePassword && !password.trim())) && shareModalStyles.createButtonDisabled,
+          ]}
+          onPress={handleCreateShare}
+          disabled={isCreating || (usePassword && !password.trim())}
+        >
+          {isCreating ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <>
+              <Link size={18} color="#ffffff" />
+              <Text style={shareModalStyles.createButtonText}>Create Share Link</Text>
+            </>
+          )}
+        </Pressable>
+
+        {/* Success Message */}
+        {newShareUrl && (
+          <View style={shareModalStyles.successBanner}>
+            <Check size={18} color={Colors.success} />
+            <Text style={shareModalStyles.successText}>Link created and copied to clipboard!</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Existing Links Section */}
+      {shares.length > 0 && (
+        <View style={shareModalStyles.section}>
+          <Text style={shareModalStyles.sectionTitle}>Active Links ({shares.length})</Text>
+          
+          {shares.map((share) => (
+            <View 
+              key={share.id} 
+              style={[
+                shareModalStyles.shareCard,
+                !share.isActive && shareModalStyles.shareCardInactive,
+              ]}
+            >
+              <View style={shareModalStyles.shareCardHeader}>
+                <View style={shareModalStyles.shareInfo}>
+                  {share.hasPassword ? (
+                    <Lock size={14} color={Colors.warning} />
+                  ) : (
+                    <Unlock size={14} color={Colors.success} />
+                  )}
+                  <Text style={shareModalStyles.shareDate}>
+                    Created {formatShareDate(share.createdAt)}
+                  </Text>
                 </View>
-                <Switch
-                  value={usePassword}
-                  onValueChange={setUsePassword}
-                  trackColor={{ false: Colors.border, true: Colors.accentLight + '80' }}
-                  thumbColor={usePassword ? Colors.accentLight : Colors.textMuted}
-                />
+                <View style={shareModalStyles.shareStats}>
+                  <Eye size={12} color={Colors.textMuted} />
+                  <Text style={shareModalStyles.shareViews}>{share.viewCount}</Text>
+                </View>
               </View>
 
-              {/* Password Input */}
-              {usePassword && (
-                <View style={shareModalStyles.passwordInputContainer}>
-                  <TextInput
-                    style={shareModalStyles.passwordInput}
-                    value={password}
-                    onChangeText={setPassword}
-                    placeholder="Enter password"
-                    placeholderTextColor="#6b7280"
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                  />
-                  <Pressable 
-                    style={shareModalStyles.passwordToggle}
-                    onPress={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword ? (
-                      <EyeOff size={20} color={Colors.textMuted} />
-                    ) : (
-                      <Eye size={20} color={Colors.textMuted} />
-                    )}
-                  </Pressable>
-                </View>
-              )}
+              <View style={shareModalStyles.shareActions}>
+                {/* Copy Button */}
+                <Pressable
+                  style={[
+                    shareModalStyles.shareActionBtn,
+                    copiedId === share.id && shareModalStyles.shareActionBtnActive,
+                  ]}
+                  onPress={() => handleCopy(share.shareUrl, share.id)}
+                >
+                  {copiedId === share.id ? (
+                    <Check size={16} color={Colors.success} />
+                  ) : (
+                    <Copy size={16} color={Colors.text} />
+                  )}
+                </Pressable>
 
-              {/* Create Button */}
-              <Pressable
-                style={[
-                  shareModalStyles.createButton,
-                  (isCreating || (usePassword && !password.trim())) && shareModalStyles.createButtonDisabled,
-                ]}
-                onPress={handleCreateShare}
-                disabled={isCreating || (usePassword && !password.trim())}
-              >
-                {isCreating ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <Link size={18} color="#ffffff" />
-                    <Text style={shareModalStyles.createButtonText}>Create Share Link</Text>
-                  </>
-                )}
-              </Pressable>
+                {/* Open Link Button */}
+                <Pressable
+                  style={shareModalStyles.shareActionBtn}
+                  onPress={() => handleOpenLink(share.shareUrl)}
+                >
+                  <ExternalLink size={16} color={Colors.text} />
+                </Pressable>
 
-              {/* Success Message */}
-              {newShareUrl && (
-                <View style={shareModalStyles.successBanner}>
-                  <Check size={18} color={Colors.success} />
-                  <Text style={shareModalStyles.successText}>Link created and copied to clipboard!</Text>
-                </View>
+                {/* Toggle Active Button */}
+                <Pressable
+                  style={shareModalStyles.shareActionBtn}
+                  onPress={() => onToggleShare(share.id, !share.isActive)}
+                  disabled={isToggling}
+                >
+                  {share.isActive ? (
+                    <EyeOff size={16} color={Colors.warning} />
+                  ) : (
+                    <Eye size={16} color={Colors.success} />
+                  )}
+                </Pressable>
+
+                {/* Delete Button */}
+                <Pressable
+                  style={shareModalStyles.shareActionBtn}
+                  onPress={() => handleDeleteShare(share.id)}
+                >
+                  <Trash2 size={16} color={Colors.error} />
+                </Pressable>
+              </View>
+
+              {!share.isActive && (
+                <Text style={shareModalStyles.inactiveLabel}>Deactivated</Text>
               )}
             </View>
+          ))}
+        </View>
+      )}
 
-            {/* Existing Links Section */}
-            {shares.length > 0 && (
-              <View style={shareModalStyles.section}>
-                <Text style={shareModalStyles.sectionTitle}>Active Links ({shares.length})</Text>
-                
-                {shares.map((share) => (
-                  <View 
-                    key={share.id} 
-                    style={[
-                      shareModalStyles.shareCard,
-                      !share.isActive && shareModalStyles.shareCardInactive,
-                    ]}
-                  >
-                    <View style={shareModalStyles.shareCardHeader}>
-                      <View style={shareModalStyles.shareInfo}>
-                        {share.hasPassword ? (
-                          <Lock size={14} color={Colors.warning} />
-                        ) : (
-                          <Unlock size={14} color={Colors.success} />
-                        )}
-                        <Text style={shareModalStyles.shareDate}>
-                          Created {formatShareDate(share.createdAt)}
-                        </Text>
-                      </View>
-                      <View style={shareModalStyles.shareStats}>
-                        <Eye size={12} color={Colors.textMuted} />
-                        <Text style={shareModalStyles.shareViews}>{share.viewCount}</Text>
-                      </View>
-                    </View>
-
-                    <View style={shareModalStyles.shareActions}>
-                      {/* Copy Button */}
-                      <Pressable
-                        style={[
-                          shareModalStyles.shareActionBtn,
-                          copiedId === share.id && shareModalStyles.shareActionBtnActive,
-                        ]}
-                        onPress={() => handleCopy(share.shareUrl, share.id)}
-                      >
-                        {copiedId === share.id ? (
-                          <Check size={16} color={Colors.success} />
-                        ) : (
-                          <Copy size={16} color={Colors.text} />
-                        )}
-                      </Pressable>
-
-                      {/* Open Link Button */}
-                      <Pressable
-                        style={shareModalStyles.shareActionBtn}
-                        onPress={() => handleOpenLink(share.shareUrl)}
-                      >
-                        <ExternalLink size={16} color={Colors.text} />
-                      </Pressable>
-
-                      {/* Toggle Active Button */}
-                      <Pressable
-                        style={shareModalStyles.shareActionBtn}
-                        onPress={() => onToggleShare(share.id, !share.isActive)}
-                        disabled={isToggling}
-                      >
-                        {share.isActive ? (
-                          <EyeOff size={16} color={Colors.warning} />
-                        ) : (
-                          <Eye size={16} color={Colors.success} />
-                        )}
-                      </Pressable>
-
-                      {/* Delete Button */}
-                      <Pressable
-                        style={shareModalStyles.shareActionBtn}
-                        onPress={() => handleDeleteShare(share.id)}
-                      >
-                        <Trash2 size={16} color={Colors.error} />
-                      </Pressable>
-                    </View>
-
-                    {!share.isActive && (
-                      <Text style={shareModalStyles.inactiveLabel}>Deactivated</Text>
-                    )}
-                  </View>
-                ))}
-              </View>
-            )}
-
-            {/* Loading State */}
-            {isLoadingShares && shares.length === 0 && (
-              <View style={shareModalStyles.loadingContainer}>
-                <ActivityIndicator size="small" color={Colors.accentLight} />
-                <Text style={shareModalStyles.loadingText}>Loading share links...</Text>
-              </View>
-            )}
-      </BottomSheetScrollView>
+      {/* Loading State */}
+      {isLoadingShares && shares.length === 0 && (
+        <View style={shareModalStyles.loadingContainer}>
+          <ActivityIndicator size="small" color={Colors.accentLight} />
+          <Text style={shareModalStyles.loadingText}>Loading share links...</Text>
+        </View>
+      )}
     </DraggableBottomSheet>
   );
 };
@@ -1750,9 +1698,7 @@ export default function MeetingDetailScreen() {
       } else {
         player.play();
       }
-      if (Platform.OS !== "web") {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
+      lightImpact();
     } catch (error) {
       console.error("[AudioPlayer] Play/pause error:", error);
     }
@@ -1771,9 +1717,7 @@ export default function MeetingDetailScreen() {
 
     try {
       await player.seekTo(seekPositionSeconds);
-      if (Platform.OS !== "web") {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
+      lightImpact();
     } catch (error) {
       console.error("[AudioPlayer] Seek error:", error);
     }
@@ -1789,9 +1733,7 @@ export default function MeetingDetailScreen() {
       if (!status.playing) {
         player.play();
       }
-      if (Platform.OS !== "web") {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
+      lightImpact();
     } catch (error) {
       console.error("[AudioPlayer] Seek error:", error);
     }
@@ -1858,9 +1800,7 @@ export default function MeetingDetailScreen() {
    * Handle share - opens share modal for creating shareable links
    */
   const handleShare = useCallback(() => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    lightImpact();
     setShowShareModal(true);
   }, []);
 
@@ -1905,9 +1845,7 @@ export default function MeetingDetailScreen() {
       });
       await refetch();
       setShowTypeSelector(false);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[MeetingDetail] Update type error:", err);
       Alert.alert("Error", "Could not update meeting type.");
@@ -1918,9 +1856,7 @@ export default function MeetingDetailScreen() {
    * Navigate to settings to manage meeting types
    */
   const handleManageTypes = () => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    lightImpact();
     setShowTypeSelector(false);
     router.push("/(tabs)/settings");
   };
@@ -1937,9 +1873,7 @@ export default function MeetingDetailScreen() {
       });
       await refetch();
       setShowContactSelector(false);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[MeetingDetail] Update contact error:", err);
       Alert.alert("Error", "Could not update contact.");
@@ -1951,9 +1885,7 @@ export default function MeetingDetailScreen() {
    * This allows the new contact to be auto-assigned to this meeting
    */
   const handleAddContact = () => {
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    lightImpact();
     setShowContactSelector(false);
     // Pass meetingId so the new contact gets auto-assigned to this meeting
     router.push(`/edit-contact?meetingId=${id}`);
@@ -1970,9 +1902,7 @@ export default function MeetingDetailScreen() {
         updates: { title: newTitle },
       });
       await refetch();
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[MeetingDetail] Update title error:", err);
       Alert.alert("Error", "Could not update meeting name.");
@@ -1999,9 +1929,7 @@ export default function MeetingDetailScreen() {
       });
       await refetch();
       setShowBillableEditor(false);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      successNotification();
     } catch (err) {
       console.error("[MeetingDetail] Update billing error:", err);
       Alert.alert("Error", "Could not update billing information.");
@@ -2161,9 +2089,7 @@ export default function MeetingDetailScreen() {
             <Pressable
               style={styles.typeRow}
               onPress={() => {
-                if (Platform.OS !== "web") {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
+                lightImpact();
                 setShowTypeSelector(true);
               }}
             >
@@ -2190,9 +2116,7 @@ export default function MeetingDetailScreen() {
             <Pressable
               style={styles.typeRow}
               onPress={() => {
-                if (Platform.OS !== "web") {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
+                lightImpact();
                 setShowContactSelector(true);
               }}
             >
@@ -2235,9 +2159,7 @@ export default function MeetingDetailScreen() {
               <Switch
                 value={meeting.is_billable}
                 onValueChange={(value) => {
-                  if (Platform.OS !== "web") {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
+                  lightImpact();
                   if (value) {
                     // Open modal when toggling ON
                     setShowBillableEditor(true);
@@ -2299,7 +2221,10 @@ export default function MeetingDetailScreen() {
         {/* Summary Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Summary</Text>
-          {transcript?.summary ? (
+          {transcript?.summary && 
+           transcript.summary !== 'Summary not available.' && 
+           transcript.summary !== 'Summary generation failed. Please retry processing.' &&
+           transcript.summary !== 'Summary generation encountered an error.' ? (
             <Text style={styles.summaryText}>{transcript.summary}</Text>
           ) : (
             <Text style={styles.noDataText}>
@@ -2374,9 +2299,7 @@ export default function MeetingDetailScreen() {
       <Pressable 
         style={[styles.floatingActionButton, shouldShowAudioBar && styles.floatingActionButtonWithAudio]}
         onPress={() => {
-          if (Platform.OS !== "web") {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }
+          lightImpact();
           setShowQuickActions(true);
         }}
       >
@@ -3848,7 +3771,6 @@ const quickActionsStyles = StyleSheet.create({
     paddingBottom: 12,
   },
   actionsList: {
-    paddingHorizontal: 20,
     gap: 4,
   },
   actionItem: {
@@ -3882,20 +3804,28 @@ const editNameStyles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
   container: {
     backgroundColor: '#1a1f2e',
-    borderRadius: 16,
+    borderRadius: 20,
     width: '85%',
     maxWidth: 400,
-    padding: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 24,
   },
   title: {
     fontSize: 20,
     fontWeight: '700',
     color: '#ffffff',
-    marginBottom: 16,
+    marginBottom: 20,
     textAlign: 'center',
   },
   input: {

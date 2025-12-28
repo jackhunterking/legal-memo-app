@@ -239,12 +239,11 @@ async function convertToMp3(
   return await mp3Response.blob();
 }
 
-// Step 2: Transcribe with AssemblyAI using SLAM-1 model and built-in summarization
+// Step 2: Transcribe with AssemblyAI using SLAM-1 model
 // Per AssemblyAI documentation:
 // - SLAM-1: Best accuracy for English audio
 // - 'best': Universal model for 99+ languages
 // - speakers_expected: Exact count for best diarization accuracy
-// - summarization: Built-in feature with summary_model and summary_type
 async function transcribeAudio(
   audioUrl: string,
   assemblyAIKey: string,
@@ -263,7 +262,7 @@ async function transcribeAudio(
   // Build request body per AssemblyAI documentation
   // https://www.assemblyai.com/docs/pre-recorded-audio/speaker-diarization
   // https://www.assemblyai.com/docs/pre-recorded-audio/select-the-speech-model
-  // https://www.assemblyai.com/docs/audio-intelligence/summarization
+  // NOTE: Using LeMUR for summarization separately (works with all models including SLAM-1)
   const requestBody: Record<string, unknown> = {
     audio_url: audioUrl,
     // Speech model selection
@@ -273,16 +272,11 @@ async function transcribeAudio(
     // "speakers_expected gives best accuracy when you know the count"
     speaker_labels: true,
     speakers_expected: expectedSpeakers,
-    // Built-in summarization (both summary_model AND summary_type are required)
-    // Per docs: enabling summarization includes the summary in the response
-    summarization: true,
-    summary_model: "informative",  // Options: informative, conversational, catchy
-    summary_type: "paragraph",      // Options: bullets, bullets_verbose, gist, headline, paragraph
     // Additional features
     auto_highlights: true,
   };
 
-  console.log(`[ProcessRecording] Request config: speech_model=${speechModel}, speakers_expected=${expectedSpeakers}, summarization=true`);
+  console.log(`[ProcessRecording] Request config: speech_model=${speechModel}, speakers_expected=${expectedSpeakers}`);
 
   // Submit transcription job
   const submitResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
@@ -333,13 +327,6 @@ async function transcribeAudio(
         console.log(`[ProcessRecording] Speaker count matches: ${detectedSpeakers}`);
       }
 
-      // Log summary status
-      if (transcript.summary) {
-        console.log(`[ProcessRecording] Summary generated: ${transcript.summary.substring(0, 100)}...`);
-      } else {
-        console.warn("[ProcessRecording] No summary in response - summarization may have failed");
-      }
-
       return {
         transcript,
         speechModel,
@@ -360,7 +347,62 @@ async function transcribeAudio(
   throw new Error("AssemblyAI transcription timed out");
 }
 
-// Step 3: Record usage for analytics
+// Step 3: Generate summary using LeMUR
+// LeMUR is AssemblyAI's LLM that works with any transcript, regardless of speech model
+// This is more reliable than built-in summarization which may have model restrictions
+async function generateSummaryWithLemur(
+  transcriptId: string,
+  assemblyAIKey: string
+): Promise<string> {
+  console.log("[ProcessRecording] Generating summary with LeMUR...");
+  console.log(`[ProcessRecording] Transcript ID for summary: ${transcriptId}`);
+
+  try {
+    // Use LeMUR summary endpoint with correct parameters
+    // Valid models: default, basic, anthropic/claude-3-sonnet-20240229, anthropic/claude-3-opus-20240229
+    const requestBody = {
+      transcript_ids: [transcriptId],
+      context: "This is a legal meeting transcript. Provide a professional summary suitable for legal documentation, highlighting key points, decisions, and action items.",
+      final_model: "anthropic/claude-3-sonnet-20240229",
+    };
+    
+    console.log("[ProcessRecording] LeMUR request body:", JSON.stringify(requestBody));
+
+    const response = await fetch(`${ASSEMBLYAI_API_URL}/lemur/v3/generate/summary`, {
+      method: "POST",
+      headers: {
+        Authorization: assemblyAIKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const responseText = await response.text();
+    console.log(`[ProcessRecording] LeMUR response status: ${response.status}`);
+    console.log(`[ProcessRecording] LeMUR response: ${responseText.substring(0, 500)}`);
+
+    if (!response.ok) {
+      console.error("[ProcessRecording] LeMUR summary failed:", responseText);
+      return "Summary generation failed. Please retry processing.";
+    }
+
+    const result = JSON.parse(responseText) as { response?: string; summary?: string };
+    const summary = result.response || result.summary;
+    
+    if (summary) {
+      console.log(`[ProcessRecording] LeMUR summary generated successfully: ${summary.substring(0, 100)}...`);
+      return summary;
+    }
+
+    console.warn("[ProcessRecording] LeMUR returned empty summary, response:", JSON.stringify(result));
+    return "Summary not available.";
+  } catch (error) {
+    console.error("[ProcessRecording] LeMUR error:", error);
+    return "Summary generation encountered an error.";
+  }
+}
+
+// Step 4: Record usage for analytics
 // Note: Trial is now time-based (7 days unlimited), not minute-based
 interface UsageResult {
   success: boolean;
@@ -562,7 +604,12 @@ Deno.serve(async (req: Request) => {
     const { transcript, speechModel, detectedSpeakers, speakerMismatch } = transcriptionResult;
 
     // ============================================
-    // STEP 4: Update meeting with speaker validation results
+    // STEP 4: Generate summary using LeMUR
+    // ============================================
+    const summary = await generateSummaryWithLemur(transcript.id, assemblyAIKey);
+
+    // ============================================
+    // STEP 5: Update meeting with speaker validation results
     // ============================================
     console.log("[ProcessRecording] Updating meeting with transcription metadata...");
     await supabase
@@ -576,7 +623,7 @@ Deno.serve(async (req: Request) => {
       .eq("id", meetingId);
 
     // ============================================
-    // STEP 5: Save transcript and segments
+    // STEP 6: Save transcript and segments
     // ============================================
     console.log("[ProcessRecording] Saving transcript...");
 
@@ -584,14 +631,13 @@ Deno.serve(async (req: Request) => {
     await supabase.from("transcript_segments").delete().eq("meeting_id", meetingId);
     await supabase.from("transcripts").delete().eq("meeting_id", meetingId);
 
-    // Save main transcript with summary from AssemblyAI response
-    // Summary comes from built-in summarization feature, not a separate LeMUR call
+    // Save main transcript with summary from LeMUR
     const { error: transcriptError } = await supabase
       .from("transcripts")
       .insert({
         meeting_id: meetingId,
         full_text: transcript.text || "",
-        summary: transcript.summary || "Summary not available.",
+        summary: summary,
         assemblyai_transcript_id: transcript.id,
       });
 
@@ -629,7 +675,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================
-    // STEP 6: Record usage and send to Polar
+    // STEP 7: Record usage and send to Polar
     // ============================================
     let usageResult: UsageResult | null = null;
     if (meeting.duration_seconds > 0) {
@@ -646,7 +692,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================
-    // STEP 7: Update status to ready
+    // STEP 8: Update status to ready
     // ============================================
     await updateJobStatus(supabase, meetingId, "completed", null);
     await updateMeetingStatus(supabase, meetingId, "ready");
@@ -663,7 +709,7 @@ Deno.serve(async (req: Request) => {
         stats: {
           segments: transcript.utterances?.length || 0,
           text_length: transcript.text?.length || 0,
-          has_summary: !!transcript.summary,
+          has_summary: summary !== "Summary not available." && summary !== "Summary generation failed. Please retry processing." && summary !== "Summary generation encountered an error.",
         },
         speaker_validation: {
           expected: expectedSpeakers,
