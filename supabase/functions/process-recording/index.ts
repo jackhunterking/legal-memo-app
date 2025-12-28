@@ -359,16 +359,17 @@ async function generateSummaryWithLemur(
 
   try {
     // Use LeMUR summary endpoint with correct parameters
-    // Valid models: default, basic, anthropic/claude-3-sonnet-20240229, anthropic/claude-3-opus-20240229
+    // Valid models: anthropic/claude-3-opus, anthropic/claude-3-haiku, anthropic/claude-sonnet-4-20250514
     const requestBody = {
       transcript_ids: [transcriptId],
       context: "This is a legal meeting transcript. Provide a professional summary suitable for legal documentation, highlighting key points, decisions, and action items.",
-      final_model: "anthropic/claude-3-sonnet-20240229",
+      final_model: "anthropic/claude-3-opus",
     };
     
     console.log("[ProcessRecording] LeMUR request body:", JSON.stringify(requestBody));
 
-    const response = await fetch(`${ASSEMBLYAI_API_URL}/lemur/v3/generate/summary`, {
+    // Note: LeMUR endpoint is NOT under /v2, it's directly on api.assemblyai.com
+    const response = await fetch("https://api.assemblyai.com/lemur/v3/generate/summary", {
       method: "POST",
       headers: {
         Authorization: assemblyAIKey,
