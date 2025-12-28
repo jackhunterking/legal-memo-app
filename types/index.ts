@@ -472,6 +472,82 @@ export function getContactInitials(contact: Contact): string {
   return (first + last).toUpperCase() || '?';
 }
 
+// =============================================================================
+// AssemblyAI Configuration Types
+// =============================================================================
+
+/**
+ * AssemblyAI speech models
+ * - 'slam-1': Best accuracy for English audio (SLAM-1 model)
+ * - 'best': Universal model, supports 99+ languages
+ */
+export type SpeechModel = 'slam-1' | 'best';
+
+/**
+ * Supported transcription languages
+ * Default: 'en' (English) - uses SLAM-1 model
+ * Other languages use Universal ('best') model
+ */
+export type TranscriptionLanguage = 
+  | 'en'  // English (SLAM-1)
+  | 'es'  // Spanish
+  | 'fr'  // French
+  | 'de'  // German
+  | 'it'  // Italian
+  | 'pt'  // Portuguese
+  | 'ja'  // Japanese
+  | 'zh'  // Chinese
+  | 'ko'; // Korean
+
+/**
+ * Summary model options per AssemblyAI docs
+ * Used with built-in summarization feature
+ */
+export type SummaryModel = 'informative' | 'conversational' | 'catchy';
+
+/**
+ * Summary type options per AssemblyAI docs
+ * Controls the format of the generated summary
+ */
+export type SummaryType = 'bullets' | 'bullets_verbose' | 'gist' | 'headline' | 'paragraph';
+
+// =============================================================================
+// Speaker Feedback Types
+// =============================================================================
+
+/**
+ * Types of speaker diarization feedback users can submit
+ */
+export type SpeakerFeedbackType = 
+  | 'wrong_speaker_count'   // Detected different number than actual
+  | 'speakers_merged'       // Two speakers incorrectly combined as one
+  | 'speakers_split'        // One speaker incorrectly split into two
+  | 'wrong_attribution'     // Text attributed to wrong speaker
+  | 'other';                // Other issues
+
+/**
+ * Status of speaker feedback for tracking/resolution
+ */
+export type SpeakerFeedbackStatus = 'pending' | 'reviewed' | 'resolved';
+
+/**
+ * Speaker feedback record for tracking diarization issues
+ * All fields except id, meeting_id, user_id, and status are optional
+ * to allow users to provide only the information they want to share
+ */
+export interface SpeakerFeedback {
+  id: string;
+  meeting_id: string;
+  user_id: string;
+  feedback_type?: SpeakerFeedbackType | null;
+  expected_speakers?: number | null;
+  detected_speakers?: number | null;
+  notes?: string | null;
+  status: SpeakerFeedbackStatus;
+  created_at: string;
+  updated_at: string;
+}
+
 // Meeting
 export interface Meeting {
   id: string;
@@ -491,6 +567,14 @@ export interface Meeting {
   // Speaker diarization config
   // 1 = solo (single speaker), 2 = two people (default), 3 = three or more
   expected_speakers: number;
+  
+  // Speaker diarization validation (populated after transcription)
+  detected_speakers: number | null;      // Actual speakers detected by AssemblyAI
+  speaker_mismatch: boolean;             // True if detected != expected
+  
+  // Transcription settings
+  transcription_language: string;        // Language code (default: 'en')
+  speech_model_used: string | null;      // Model used: 'slam-1' or 'best'
   
   // Meeting type
   meeting_type_id: string | null;

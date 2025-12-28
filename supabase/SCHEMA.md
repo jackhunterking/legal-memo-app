@@ -45,6 +45,10 @@ Stores meeting recordings and metadata.
 | duration_seconds | integer | Recording duration |
 | recorded_at | timestamptz | When recording started |
 | expected_speakers | integer | Number of expected speakers (1=solo, 2=default, 3+=group) |
+| detected_speakers | integer | Actual speakers detected by AssemblyAI |
+| speaker_mismatch | boolean | True if detected_speakers != expected_speakers |
+| transcription_language | text | Language code used for transcription (default: 'en') |
+| speech_model_used | text | AssemblyAI model used: 'slam-1' (English) or 'best' (Universal) |
 | meeting_type_id | uuid | Reference to meeting_types |
 | contact_id | uuid | Reference to contacts |
 | is_billable | boolean | Whether meeting is billable |
@@ -240,6 +244,27 @@ Audit log of all usage events.
 | polar_event_id | text | Polar webhook event ID |
 | created_at | timestamptz | Creation timestamp |
 
+### Feedback Tables
+
+#### `speaker_feedback`
+User feedback on speaker diarization accuracy for continuous improvement.
+Only stores fields that users actually provide (feedback_type and/or notes).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| meeting_id | uuid | Reference to meetings |
+| user_id | uuid | Reference to auth.users |
+| feedback_type | text (optional) | Type: wrong_speaker_count, speakers_merged, speakers_split, wrong_attribution, other. NULL if user only provided notes. |
+| expected_speakers | integer (optional) | What user expected. NULL if not relevant to feedback. |
+| detected_speakers | integer (optional) | What AssemblyAI detected. NULL if not relevant to feedback. |
+| notes | text (optional) | User notes describing the issue. NULL if user only selected a feedback type. |
+| status | text | Status: pending, reviewed, resolved |
+| created_at | timestamptz | Creation timestamp |
+| updated_at | timestamptz | Last update timestamp |
+
+**Constraints**: At least one of `feedback_type` or `notes` (non-empty) must be provided.
+
 ---
 
 ## Database Functions
@@ -332,6 +357,7 @@ The following views are available for admin dashboards (query via Supabase Dashb
 - `admin_usage_stats` - Usage analytics per user
 - `admin_trial_status` - Trial tracking with conversion opportunities
 - `admin_revenue_summary` - Aggregate business metrics
+- `admin_speaker_feedback_summary` - Speaker feedback with meeting and user details for analysis
 
 ---
 
@@ -348,14 +374,21 @@ Returns AssemblyAI API key for authenticated users to enable real-time streaming
 Processes recorded audio through the full pipeline:
 1. Download raw audio from storage
 2. Convert to MP3 using CloudConvert
-3. Transcribe with AssemblyAI (with speaker diarization)
-4. Generate summary with LeMUR
-5. Save transcript and segments to database
+3. Transcribe with AssemblyAI (SLAM-1 model for English, Universal for other languages)
+   - Uses exact `speakers_expected` parameter for accurate speaker diarization
+   - Built-in summarization with `summary_model: 'informative'` and `summary_type: 'paragraph'`
+4. Validate speaker detection (compare detected vs expected)
+5. Save transcript, segments, and speaker metadata to database
 6. Record usage for analytics
 
 **Auth**: Service role (triggered by database)  
 **Method**: POST  
 **Body**: `{ meeting_id: string }`
+
+**Speaker Diarization**: Uses `speakers_expected` for exact speaker count per AssemblyAI docs.
+**Speech Models**: 
+- `slam-1`: SLAM-1 model for English (highest accuracy)
+- `best`: Universal model for 99+ languages
 
 ### `streaming-transcribe`
 Handles real-time streaming transcription with AssemblyAI v3 API.
@@ -401,6 +434,22 @@ Returns meeting data as JSON for public sharing pages.
 **Auth**: None (token-based)  
 **Method**: GET/POST  
 **Query params**: `token`, `mode`
+
+### `speaker-feedback`
+Handles user feedback submissions for speaker diarization issues.
+
+**Auth**: Required (Bearer token)  
+**Method**: POST  
+**Body**: `{ meeting_id: string, feedback_type?: string, notes?: string }`
+
+**Note**: At least one of `feedback_type` or `notes` must be provided.
+
+**Feedback types** (optional):
+- `wrong_speaker_count` - Detected different number than actual
+- `speakers_merged` - Two speakers incorrectly combined as one
+- `speakers_split` - One speaker incorrectly split into two
+- `wrong_attribution` - Text attributed to wrong speaker
+- `other` - Other issues
 
 ---
 

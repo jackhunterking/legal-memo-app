@@ -25,6 +25,8 @@ import { useUsage } from "@/contexts/UsageContext";
 import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, setBiometricEnabled } from "@/lib/biometrics";
 import { DEFAULT_TYPE_COLORS, MeetingType, ContactCategory, DEFAULT_CONTACT_CATEGORY_COLORS, CURRENCY_SYMBOLS } from "@/types";
+import DraggableBottomSheet from "@/components/DraggableBottomSheet";
+import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 
 // Meeting Type Editor Modal Component
 const MeetingTypeModal = ({
@@ -114,110 +116,104 @@ const MeetingTypeModal = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <DraggableBottomSheet
+      visible={visible}
+      onClose={onClose}
+      title={type ? "Edit Type" : "New Meeting Type"}
+      snapPoints={["60%", "85%"]}
+      enableFullScreen={true}
+    >
       <KeyboardAvoidingView 
-        style={modalStyles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        style={{ flex: 1 }}
       >
-        <Pressable style={modalStyles.overlay} onPress={handleDismissKeyboard}>
-          <Pressable style={modalStyles.container} onPress={(e) => e.stopPropagation()}>
-            <View style={modalStyles.header}>
-              <Text style={modalStyles.title}>{type ? "Edit Type" : "New Meeting Type"}</Text>
-              <Pressable onPress={onClose} style={modalStyles.closeButton}>
-                <X size={24} color={Colors.text} />
+        <BottomSheetScrollView 
+          style={modalStyles.scrollContent}
+          contentContainerStyle={modalStyles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={modalStyles.label}>Name</Text>
+          <TextInput
+            ref={inputRef}
+            style={modalStyles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g., Client Call"
+            placeholderTextColor={Colors.textMuted}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={handleDismissKeyboard}
+            blurOnSubmit={true}
+          />
+
+          <Text style={modalStyles.label}>Color</Text>
+          <View style={modalStyles.colorGrid}>
+            {DEFAULT_TYPE_COLORS.map((color) => (
+              <Pressable
+                key={color}
+                style={[
+                  modalStyles.colorOption,
+                  { backgroundColor: color },
+                  selectedColor === color && modalStyles.colorOptionSelected,
+                ]}
+                onPress={() => {
+                  setSelectedColor(color);
+                  Keyboard.dismiss();
+                }}
+              >
+                {selectedColor === color && <Check size={16} color="#fff" />}
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={modalStyles.preview}>
+            <Text style={modalStyles.previewLabel}>Preview:</Text>
+            <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
+              <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
+              <Text style={[modalStyles.previewText, { color: selectedColor }]}>
+                {name || "Meeting Type"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={modalStyles.footer}>
+            {type && !type.is_default && onDelete && (
+              <Pressable
+                style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
+                onPress={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <ActivityIndicator size="small" color={Colors.error} />
+                ) : (
+                  <>
+                    <Trash2 size={16} color={Colors.error} />
+                    <Text style={modalStyles.deleteButtonText}>Delete</Text>
+                  </>
+                )}
+              </Pressable>
+            )}
+            <View style={modalStyles.actionButtons}>
+              <Pressable style={modalStyles.cancelButton} onPress={onClose}>
+                <Text style={modalStyles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
+                onPress={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : (
+                  <Text style={modalStyles.saveButtonText}>Save</Text>
+                )}
               </Pressable>
             </View>
-
-            <ScrollView 
-              style={modalStyles.scrollContent}
-              contentContainerStyle={modalStyles.content}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={modalStyles.label}>Name</Text>
-              <TextInput
-                ref={inputRef}
-                style={modalStyles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="e.g., Client Call"
-                placeholderTextColor={Colors.textMuted}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleDismissKeyboard}
-                blurOnSubmit={true}
-              />
-
-              <Text style={modalStyles.label}>Color</Text>
-              <View style={modalStyles.colorGrid}>
-                {DEFAULT_TYPE_COLORS.map((color) => (
-                  <Pressable
-                    key={color}
-                    style={[
-                      modalStyles.colorOption,
-                      { backgroundColor: color },
-                      selectedColor === color && modalStyles.colorOptionSelected,
-                    ]}
-                    onPress={() => {
-                      setSelectedColor(color);
-                      Keyboard.dismiss();
-                    }}
-                  >
-                    {selectedColor === color && <Check size={16} color="#fff" />}
-                  </Pressable>
-                ))}
-              </View>
-
-              <View style={modalStyles.preview}>
-                <Text style={modalStyles.previewLabel}>Preview:</Text>
-                <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
-                  <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
-                  <Text style={[modalStyles.previewText, { color: selectedColor }]}>
-                    {name || "Meeting Type"}
-                  </Text>
-                </View>
-              </View>
-            </ScrollView>
-
-            <View style={modalStyles.footer}>
-              {type && !type.is_default && onDelete && (
-                <Pressable
-                  style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
-                  onPress={handleDelete}
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? (
-                    <ActivityIndicator size="small" color={Colors.error} />
-                  ) : (
-                    <>
-                      <Trash2 size={16} color={Colors.error} />
-                      <Text style={modalStyles.deleteButtonText}>Delete</Text>
-                    </>
-                  )}
-                </Pressable>
-              )}
-              <View style={modalStyles.actionButtons}>
-                <Pressable style={modalStyles.cancelButton} onPress={onClose}>
-                  <Text style={modalStyles.cancelButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
-                  onPress={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={Colors.text} />
-                  ) : (
-                    <Text style={modalStyles.saveButtonText}>Save</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </BottomSheetScrollView>
       </KeyboardAvoidingView>
-    </Modal>
+    </DraggableBottomSheet>
   );
 };
 
@@ -308,110 +304,104 @@ const ContactCategoryModal = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <DraggableBottomSheet
+      visible={visible}
+      onClose={onClose}
+      title={category ? "Edit Category" : "New Contact Category"}
+      snapPoints={["60%", "85%"]}
+      enableFullScreen={true}
+    >
       <KeyboardAvoidingView 
-        style={modalStyles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        style={{ flex: 1 }}
       >
-        <Pressable style={modalStyles.overlay} onPress={handleDismissKeyboard}>
-          <Pressable style={modalStyles.container} onPress={(e) => e.stopPropagation()}>
-            <View style={modalStyles.header}>
-              <Text style={modalStyles.title}>{category ? "Edit Category" : "New Contact Category"}</Text>
-              <Pressable onPress={onClose} style={modalStyles.closeButton}>
-                <X size={24} color={Colors.text} />
+        <BottomSheetScrollView 
+          style={modalStyles.scrollContent}
+          contentContainerStyle={modalStyles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={modalStyles.label}>Name</Text>
+          <TextInput
+            ref={inputRef}
+            style={modalStyles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g., Client"
+            placeholderTextColor={Colors.textMuted}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={handleDismissKeyboard}
+            blurOnSubmit={true}
+          />
+
+          <Text style={modalStyles.label}>Color</Text>
+          <View style={modalStyles.colorGrid}>
+            {DEFAULT_CONTACT_CATEGORY_COLORS.map((color) => (
+              <Pressable
+                key={color}
+                style={[
+                  modalStyles.colorOption,
+                  { backgroundColor: color },
+                  selectedColor === color && modalStyles.colorOptionSelected,
+                ]}
+                onPress={() => {
+                  setSelectedColor(color);
+                  Keyboard.dismiss();
+                }}
+              >
+                {selectedColor === color && <Check size={16} color="#fff" />}
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={modalStyles.preview}>
+            <Text style={modalStyles.previewLabel}>Preview:</Text>
+            <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
+              <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
+              <Text style={[modalStyles.previewText, { color: selectedColor }]}>
+                {name || "Category Name"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={modalStyles.footer}>
+            {category && !category.is_default && onDelete && (
+              <Pressable
+                style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
+                onPress={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <ActivityIndicator size="small" color={Colors.error} />
+                ) : (
+                  <>
+                    <Trash2 size={16} color={Colors.error} />
+                    <Text style={modalStyles.deleteButtonText}>Delete</Text>
+                  </>
+                )}
+              </Pressable>
+            )}
+            <View style={modalStyles.actionButtons}>
+              <Pressable style={modalStyles.cancelButton} onPress={onClose}>
+                <Text style={modalStyles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
+                onPress={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : (
+                  <Text style={modalStyles.saveButtonText}>Save</Text>
+                )}
               </Pressable>
             </View>
-
-            <ScrollView 
-              style={modalStyles.scrollContent}
-              contentContainerStyle={modalStyles.content}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={modalStyles.label}>Name</Text>
-              <TextInput
-                ref={inputRef}
-                style={modalStyles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="e.g., Client"
-                placeholderTextColor={Colors.textMuted}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleDismissKeyboard}
-                blurOnSubmit={true}
-              />
-
-              <Text style={modalStyles.label}>Color</Text>
-              <View style={modalStyles.colorGrid}>
-                {DEFAULT_CONTACT_CATEGORY_COLORS.map((color) => (
-                  <Pressable
-                    key={color}
-                    style={[
-                      modalStyles.colorOption,
-                      { backgroundColor: color },
-                      selectedColor === color && modalStyles.colorOptionSelected,
-                    ]}
-                    onPress={() => {
-                      setSelectedColor(color);
-                      Keyboard.dismiss();
-                    }}
-                  >
-                    {selectedColor === color && <Check size={16} color="#fff" />}
-                  </Pressable>
-                ))}
-              </View>
-
-              <View style={modalStyles.preview}>
-                <Text style={modalStyles.previewLabel}>Preview:</Text>
-                <View style={[modalStyles.previewBadge, { backgroundColor: selectedColor + "20" }]}>
-                  <View style={[modalStyles.previewDot, { backgroundColor: selectedColor }]} />
-                  <Text style={[modalStyles.previewText, { color: selectedColor }]}>
-                    {name || "Category Name"}
-                  </Text>
-                </View>
-              </View>
-            </ScrollView>
-
-            <View style={modalStyles.footer}>
-              {category && !category.is_default && onDelete && (
-                <Pressable
-                  style={[modalStyles.deleteButton, isDeleting && modalStyles.deleteButtonDisabled]}
-                  onPress={handleDelete}
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? (
-                    <ActivityIndicator size="small" color={Colors.error} />
-                  ) : (
-                    <>
-                      <Trash2 size={16} color={Colors.error} />
-                      <Text style={modalStyles.deleteButtonText}>Delete</Text>
-                    </>
-                  )}
-                </Pressable>
-              )}
-              <View style={modalStyles.actionButtons}>
-                <Pressable style={modalStyles.cancelButton} onPress={onClose}>
-                  <Text style={modalStyles.cancelButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={[modalStyles.saveButton, isSaving && modalStyles.saveButtonDisabled]}
-                  onPress={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={Colors.text} />
-                  ) : (
-                    <Text style={modalStyles.saveButtonText}>Save</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </BottomSheetScrollView>
       </KeyboardAvoidingView>
-    </Modal>
+    </DraggableBottomSheet>
   );
 };
 
@@ -1206,98 +1196,93 @@ export default function SettingsScreen() {
       />
 
       {/* Billing Settings Modal */}
-      <Modal visible={showBillingModal} transparent animationType="slide" onRequestClose={() => setShowBillingModal(false)}>
-        <View style={billingStyles.overlay}>
-          <Pressable style={billingStyles.backdrop} onPress={() => setShowBillingModal(false)} />
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={billingStyles.keyboardAvoid}>
-            <View style={billingStyles.container}>
-              {/* Handle */}
-              <View style={billingStyles.handle} />
-              
-              {/* Header */}
-              <View style={billingStyles.header}>
-                <Text style={billingStyles.title}>Billing Settings</Text>
-                <Pressable onPress={() => setShowBillingModal(false)} style={billingStyles.closeButton}>
-                  <X size={24} color="#ffffff" />
-                </Pressable>
+      <DraggableBottomSheet
+        visible={showBillingModal}
+        onClose={() => setShowBillingModal(false)}
+        title="Billing Settings"
+        snapPoints={["55%", "80%"]}
+        enableFullScreen={true}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={{ flex: 1 }}
+        >
+          <BottomSheetScrollView 
+            style={billingStyles.content} 
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Hourly Rate */}
+            <View style={billingStyles.fieldGroup}>
+              <Text style={billingStyles.fieldLabel}>Default Hourly Rate</Text>
+              <View style={billingStyles.rateInputWrapper}>
+                <Text style={billingStyles.currencyPrefix}>{selectedCurrency}</Text>
+                <TextInput
+                  style={billingStyles.rateInput}
+                  value={hourlyRateInput}
+                  onChangeText={setHourlyRateInput}
+                  placeholder="150.00"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="decimal-pad"
+                />
+                <Text style={billingStyles.rateSuffix}>/hr</Text>
               </View>
+              <Text style={billingStyles.fieldHint}>
+                This rate will be used as default when marking meetings as billable
+              </Text>
+            </View>
 
-              {/* Content */}
-              <ScrollView style={billingStyles.content} keyboardShouldPersistTaps="handled">
-                {/* Hourly Rate */}
-                <View style={billingStyles.fieldGroup}>
-                  <Text style={billingStyles.fieldLabel}>Default Hourly Rate</Text>
-                  <View style={billingStyles.rateInputWrapper}>
-                    <Text style={billingStyles.currencyPrefix}>{selectedCurrency}</Text>
-                    <TextInput
-                      style={billingStyles.rateInput}
-                      value={hourlyRateInput}
-                      onChangeText={setHourlyRateInput}
-                      placeholder="150.00"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="decimal-pad"
-                    />
-                    <Text style={billingStyles.rateSuffix}>/hr</Text>
-                  </View>
-                  <Text style={billingStyles.fieldHint}>
-                    This rate will be used as default when marking meetings as billable
-                  </Text>
-                </View>
-
-                {/* Currency Symbol */}
-                <View style={billingStyles.fieldGroup}>
-                  <Text style={billingStyles.fieldLabel}>Currency Symbol</Text>
-                  <View style={billingStyles.currencyGrid}>
-                    {CURRENCY_SYMBOLS.map((currency) => (
-                      <Pressable
-                        key={currency.symbol}
-                        style={[
-                          billingStyles.currencyOption,
-                          selectedCurrency === currency.symbol && billingStyles.currencyOptionSelected,
-                        ]}
-                        onPress={() => {
-                          setSelectedCurrency(currency.symbol);
-                          if (Platform.OS !== "web") {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          }
-                        }}
-                      >
-                        <Text style={[
-                          billingStyles.currencySymbol,
-                          selectedCurrency === currency.symbol && billingStyles.currencySymbolSelected,
-                        ]}>
-                          {currency.symbol}
-                        </Text>
-                        <Text style={[
-                          billingStyles.currencyName,
-                          selectedCurrency === currency.symbol && billingStyles.currencyNameSelected,
-                        ]} numberOfLines={1}>
-                          {currency.name.split(' ')[0]}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-              </ScrollView>
-
-              {/* Footer */}
-              <View style={billingStyles.footer}>
-                <Pressable
-                  style={[billingStyles.saveButton, isSavingBilling && billingStyles.saveButtonDisabled]}
-                  onPress={handleSaveBilling}
-                  disabled={isSavingBilling}
-                >
-                  {isSavingBilling ? (
-                    <ActivityIndicator size="small" color={Colors.text} />
-                  ) : (
-                    <Text style={billingStyles.saveButtonText}>Save Settings</Text>
-                  )}
-                </Pressable>
+            {/* Currency Symbol */}
+            <View style={billingStyles.fieldGroup}>
+              <Text style={billingStyles.fieldLabel}>Currency Symbol</Text>
+              <View style={billingStyles.currencyGrid}>
+                {CURRENCY_SYMBOLS.map((currency) => (
+                  <Pressable
+                    key={currency.symbol}
+                    style={[
+                      billingStyles.currencyOption,
+                      selectedCurrency === currency.symbol && billingStyles.currencyOptionSelected,
+                    ]}
+                    onPress={() => {
+                      setSelectedCurrency(currency.symbol);
+                      if (Platform.OS !== "web") {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                  >
+                    <Text style={[
+                      billingStyles.currencySymbol,
+                      selectedCurrency === currency.symbol && billingStyles.currencySymbolSelected,
+                    ]}>
+                      {currency.symbol}
+                    </Text>
+                    <Text style={[
+                      billingStyles.currencyName,
+                      selectedCurrency === currency.symbol && billingStyles.currencyNameSelected,
+                    ]} numberOfLines={1}>
+                      {currency.name.split(' ')[0]}
+                    </Text>
+                  </Pressable>
+                ))}
               </View>
             </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+
+            {/* Footer */}
+            <View style={billingStyles.footer}>
+              <Pressable
+                style={[billingStyles.saveButton, isSavingBilling && billingStyles.saveButtonDisabled]}
+                onPress={handleSaveBilling}
+                disabled={isSavingBilling}
+              >
+                {isSavingBilling ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : (
+                  <Text style={billingStyles.saveButtonText}>Save Settings</Text>
+                )}
+              </Pressable>
+            </View>
+          </BottomSheetScrollView>
+        </KeyboardAvoidingView>
+      </DraggableBottomSheet>
     </SafeAreaView>
   );
 }

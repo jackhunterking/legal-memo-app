@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Mic, User, Users, Crown, Clock, Infinity } from "lucide-react-native";
+import { Mic, User, Users } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useMeetings } from "@/contexts/MeetingContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -114,28 +114,6 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Start Recording</Text>
-        
-        {/* Subscription Status Badge */}
-        {hasActiveSubscription ? (
-          <View style={styles.proBadge}>
-            <Crown size={14} color="#FFD700" />
-            <Text style={styles.proBadgeText}>PRO</Text>
-            <View style={styles.badgeDivider} />
-            <Infinity size={14} color="#10B981" />
-            <Text style={styles.unlimitedText}>Unlimited</Text>
-          </View>
-        ) : hasActiveTrial && !isTrialExpired ? (
-          <View style={[styles.trialBadge, trialDaysRemaining <= 2 && styles.trialBadgeUrgent]}>
-            <Clock size={14} color={trialDaysRemaining <= 2 ? Colors.warning : Colors.accent} />
-            <Text style={[styles.trialBadgeText, trialDaysRemaining <= 2 && styles.trialBadgeTextUrgent]}>
-              {trialDaysRemaining === 0 
-                ? 'Trial ends today' 
-                : trialDaysRemaining === 1 
-                  ? 'Trial ends tomorrow'
-                  : `${trialDaysRemaining} days left`}
-            </Text>
-          </View>
-        ) : null}
       </View>
 
       {/* Meeting Type Selector */}
@@ -273,61 +251,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     letterSpacing: -0.5,
     textAlign: "center",
-  },
-  // PRO subscription badge
-  proBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 215, 0, 0.12)",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 12,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255, 215, 0, 0.3)",
-  },
-  proBadgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#FFD700",
-    letterSpacing: 0.5,
-  },
-  badgeDivider: {
-    width: 1,
-    height: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    marginHorizontal: 4,
-  },
-  unlimitedText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#10B981",
-  },
-  // Trial badge
-  trialBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: `${Colors.accent}15`,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 12,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: `${Colors.accent}30`,
-  },
-  trialBadgeUrgent: {
-    backgroundColor: `${Colors.warning}15`,
-    borderColor: `${Colors.warning}30`,
-  },
-  trialBadgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: Colors.accent,
-  },
-  trialBadgeTextUrgent: {
-    color: Colors.warning,
   },
   meetingTypeSection: {
     paddingHorizontal: 24,

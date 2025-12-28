@@ -609,6 +609,71 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  // ============================================
+  // SPEAKER FEEDBACK
+  // ============================================
+
+  // Submit speaker diarization feedback
+  const submitSpeakerFeedbackMutation = useMutation({
+    mutationFn: async ({
+      meetingId,
+      feedbackType,
+      notes,
+    }: {
+      meetingId: string;
+      feedbackType?: 'wrong_speaker_count' | 'speakers_merged' | 'speakers_split' | 'wrong_attribution' | 'other';
+      notes?: string;
+    }): Promise<{ feedback_id: string; message: string }> => {
+      if (!user?.id) throw new Error('Not authenticated');
+      
+      // Validate at least one field is provided
+      const hasNotes = notes && notes.trim().length > 0;
+      if (!feedbackType && !hasNotes) {
+        throw new Error('At least one of feedback type or notes must be provided');
+      }
+      
+      console.log('[MeetingContext] Submitting speaker feedback for meeting:', meetingId);
+      console.log('[MeetingContext] Feedback type:', feedbackType || 'none (notes only)');
+      console.log('[MeetingContext] Has notes:', hasNotes);
+      
+      // Build request body with only provided fields
+      const requestBody: {
+        meeting_id: string;
+        feedback_type?: string;
+        notes?: string;
+      } = {
+        meeting_id: meetingId,
+      };
+      
+      if (feedbackType) {
+        requestBody.feedback_type = feedbackType;
+      }
+      
+      if (hasNotes) {
+        requestBody.notes = notes;
+      }
+      
+      const { data, error } = await supabase.functions.invoke('speaker-feedback', {
+        body: requestBody,
+      });
+      
+      if (error) {
+        console.error('[MeetingContext] Error submitting feedback:', error.message);
+        throw new Error(error.message || 'Failed to submit feedback');
+      }
+      
+      if (!data?.success) {
+        throw new Error(data?.error || 'Failed to submit feedback');
+      }
+      
+      console.log('[MeetingContext] Feedback submitted:', data.feedback_id);
+      return {
+        feedback_id: data.feedback_id,
+        message: data.message || 'Thank you for your feedback.',
+      };
+    },
+  });
+
   return {
     // Meeting data
     meetings: meetingsQuery.data || [],
@@ -660,6 +725,10 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     isCreatingShare: createMeetingShareMutation.isPending,
     isTogglingShare: toggleMeetingShareMutation.isPending,
     isDeletingShare: deleteMeetingShareMutation.isPending,
+    
+    // Speaker feedback actions
+    submitSpeakerFeedback: submitSpeakerFeedbackMutation.mutateAsync,
+    isSubmittingFeedback: submitSpeakerFeedbackMutation.isPending,
   };
 });
 
