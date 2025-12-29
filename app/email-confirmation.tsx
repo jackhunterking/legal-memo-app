@@ -11,7 +11,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, ArrowLeft, RefreshCw, CheckCircle } from "lucide-react-native";
-import { mediumImpact, successNotification, errorNotification } from "@/lib/haptics";
+import { mediumImpact, successNotification, errorNotification, lightImpact } from "@/lib/haptics";
 import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
 
@@ -68,6 +68,9 @@ export default function EmailConfirmationScreen() {
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: email,
+        options: {
+          emailRedirectTo: 'legalmemo://',
+        }
       });
       
       if (error) throw error;

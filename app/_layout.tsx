@@ -7,6 +7,7 @@ import { Alert } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AppConfigProvider, useAppConfig } from "@/contexts/AppConfigContext";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import { ContactProvider } from "@/contexts/ContactContext";
 import { UsageProvider, useUsage } from "@/contexts/UsageContext";
@@ -24,10 +25,36 @@ function DeepLinkHandler({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { refreshSubscription, hasActiveSubscription } = useUsage();
 
-  // Handle deep links for checkout success
+  // Handle deep links for various auth flows and checkout success
   const handleDeepLink = useCallback(async (event: { url: string }) => {
     const url = event.url;
     console.log('[DeepLink] Received URL:', url);
+
+    // Handle email confirmation/verification (signup, email change)
+    if (url.includes('type=signup') || url.includes('type=email') || url.includes('email-confirmation')) {
+      console.log('[DeepLink] Email confirmation detected');
+      // Supabase automatically handles the session
+      // Navigate to email verified success screen after a brief delay to let auth state update
+      setTimeout(() => {
+        router.replace('/email-verified');
+      }, 500);
+      return;
+    }
+
+    // Handle password reset
+    if (url.includes('type=recovery')) {
+      console.log('[DeepLink] Password reset detected');
+      // Navigate to home - user will need to re-authenticate
+      router.replace('/');
+      return;
+    }
+
+    // Handle magic link sign-in
+    if (url.includes('type=magiclink')) {
+      console.log('[DeepLink] Magic link detected');
+      router.replace('/');
+      return;
+    }
 
     // Check if this is a checkout success redirect
     // URL format: https://legalmemo.app/checkout/success
@@ -45,8 +72,8 @@ function DeepLinkHandler({ children }: { children: React.ReactNode }) {
       // Small delay to let React Query update the state
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Navigate to home - user can start using the app immediately
-      router.replace('/(tabs)/home');
+      // Navigate through index for proper routing (profile check, force update, etc.)
+      router.replace('/');
       
       // Show success message
       Alert.alert(
@@ -79,18 +106,19 @@ function DeepLinkHandler({ children }: { children: React.ReactNode }) {
 
 function RootLayoutNav() {
   const { isLoading: authLoading } = useAuth();
+  const { isLoading: configLoading } = useAppConfig();
   const { isLoading: usageLoading } = useUsage();
   const [isAppReady, setIsAppReady] = useState(false);
 
   // Wait for critical contexts to load before hiding splash screen
   // This prevents the "first click doesn't work" issue
   useEffect(() => {
-    if (!authLoading && !usageLoading && !isAppReady) {
+    if (!authLoading && !configLoading && !usageLoading && !isAppReady) {
       console.log('[RootLayout] App ready, hiding splash screen');
       SplashScreen.hideAsync();
       setIsAppReady(true);
     }
-  }, [authLoading, usageLoading, isAppReady]);
+  }, [authLoading, configLoading, usageLoading, isAppReady]);
 
   return (
     <Stack
@@ -104,6 +132,9 @@ function RootLayoutNav() {
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="auth" options={{ headerShown: false }} />
+      <Stack.Screen name="email-confirmation" options={{ headerShown: false }} />
+      <Stack.Screen name="email-verified" options={{ headerShown: false, gestureEnabled: false }} />
+      <Stack.Screen name="force-update" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="recording" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="processing" options={{ headerShown: false, gestureEnabled: false }} />
@@ -126,16 +157,18 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <UsageProvider>
-            <DeepLinkHandler>
-              <MeetingProvider>
-                <ContactProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
-                </ContactProvider>
-              </MeetingProvider>
-            </DeepLinkHandler>
-          </UsageProvider>
+          <AppConfigProvider>
+            <UsageProvider>
+              <DeepLinkHandler>
+                <MeetingProvider>
+                  <ContactProvider>
+                    <StatusBar style="light" />
+                    <RootLayoutNav />
+                  </ContactProvider>
+                </MeetingProvider>
+              </DeepLinkHandler>
+            </UsageProvider>
+          </AppConfigProvider>
         </AuthProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>

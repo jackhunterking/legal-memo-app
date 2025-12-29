@@ -109,7 +109,13 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   const signUpMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
       console.log('[AuthContext] Signing up:', email);
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      const { data, error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          emailRedirectTo: 'legalmemo://',
+        }
+      });
       if (error) throw error;
       return data;
     },
