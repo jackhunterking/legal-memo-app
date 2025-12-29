@@ -39,6 +39,7 @@ interface Meeting {
   created_at: string;
   mp3_audio_path: string | null;
   raw_audio_path: string | null;
+  speaker_names: Record<string, string> | null;
 }
 
 interface Transcript {
@@ -188,7 +189,7 @@ Deno.serve(async (req: Request) => {
     // Fetch meeting data
     const { data: meeting, error: meetingError } = await supabase
       .from('meetings')
-      .select('id, title, status, duration_seconds, recorded_at, created_at, mp3_audio_path, raw_audio_path, meeting_type_id, contact_id')
+      .select('id, title, status, duration_seconds, recorded_at, created_at, mp3_audio_path, raw_audio_path, meeting_type_id, contact_id, speaker_names')
       .eq('id', shareData.meeting_id)
       .single();
 
@@ -197,7 +198,7 @@ Deno.serve(async (req: Request) => {
       return errorResponse('MEETING_NOT_FOUND', 'The meeting associated with this link no longer exists.', 404);
     }
 
-    const meetingData = meeting as Meeting & { meeting_type_id: string | null; contact_id: string | null };
+    const meetingData = meeting as Meeting & { meeting_type_id: string | null; contact_id: string | null; speaker_names: Record<string, string> | null };
 
     // Fetch transcript
     const { data: transcript } = await supabase
@@ -258,6 +259,7 @@ Deno.serve(async (req: Request) => {
         durationSeconds: meetingData.duration_seconds,
         recordedAt: meetingData.recorded_at,
         createdAt: meetingData.created_at,
+        speakerNames: meetingData.speaker_names,
       },
       transcript: transcript ? {
         fullText: (transcript as Transcript).full_text,

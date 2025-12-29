@@ -599,6 +599,21 @@
       return '#f59e0b';
     }
     
+    // Format speaker label - use custom names if available
+    function formatSpeakerLabel(speaker, speakerNames) {
+      if (!speaker) return 'Speaker';
+      // If speakerNames mapping has a custom name for this speaker, use it
+      if (speakerNames && speakerNames[speaker]) {
+        return speakerNames[speaker];
+      }
+      // If already formatted as "Speaker X", return as is
+      if (speaker.toLowerCase().startsWith('speaker')) {
+        return speaker;
+      }
+      // Otherwise, format as "Speaker X"
+      return 'Speaker ' + speaker;
+    }
+    
     // Render functions
     function renderError(title, message) {
       document.getElementById('app').innerHTML = `
@@ -644,20 +659,24 @@
     
     function renderMeeting(data) {
       const { meeting, transcript, segments, meetingType, contact, audioUrl } = data;
+      const speakerNames = meeting.speakerNames || {};
       
       // Generate transcript HTML
       let transcriptHtml = '';
       if (segments && segments.length > 0) {
-        transcriptHtml = segments.map((seg, i) => `
+        transcriptHtml = segments.map((seg, i) => {
+          const speakerLabel = formatSpeakerLabel(seg.speaker, speakerNames);
+          return `
           <div class="segment-card" data-start="${seg.startMs}" onclick="seekTo(${seg.startMs})">
             <div class="segment-accent" style="background: ${getSpeakerColor(seg.speaker)}"></div>
             <div class="segment-content">
-              <div class="segment-speaker" style="color: ${getSpeakerColor(seg.speaker)}">${escapeHtml(seg.speaker)}</div>
+              <div class="segment-speaker" style="color: ${getSpeakerColor(seg.speaker)}">${escapeHtml(speakerLabel)}</div>
               <div class="segment-text">${escapeHtml(seg.text)}</div>
               <div class="segment-time">${formatTimestamp(seg.startMs)}</div>
             </div>
           </div>
-        `).join('');
+        `;
+        }).join('');
       } else if (transcript && transcript.fullText) {
         transcriptHtml = `<p class="full-text">${escapeHtml(transcript.fullText)}</p>`;
       } else {

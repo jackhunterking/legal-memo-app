@@ -615,9 +615,13 @@
       }
     }
     
-    // Format speaker label (match the app)
-    function formatSpeakerLabel(speaker) {
+    // Format speaker label (match the app) - use custom names if available
+    function formatSpeakerLabel(speaker, speakerNames) {
       if (!speaker) return 'Speaker';
+      // If speakerNames mapping has a custom name for this speaker, use it
+      if (speakerNames && speakerNames[speaker]) {
+        return speakerNames[speaker];
+      }
       // If already formatted as "Speaker X", return as is
       if (speaker.toLowerCase().startsWith('speaker')) {
         return speaker;
@@ -671,13 +675,14 @@
     
     function renderMeeting(data) {
       const { meeting, transcript, segments, meetingType, contact, audioUrl } = data;
+      const speakerNames = meeting.speakerNames || {};
       
       // Generate transcript HTML - matching the app's UI exactly
       let transcriptHtml = '';
       if (segments && segments.length > 0) {
         transcriptHtml = segments.map((seg, i) => {
           const colors = getSpeakerColors(seg.speaker);
-          const speakerLabel = formatSpeakerLabel(seg.speaker);
+          const speakerLabel = formatSpeakerLabel(seg.speaker, speakerNames);
           return `
           <div class="segment-card" data-start="${seg.startMs}" onclick="seekTo(${seg.startMs})">
             <div class="segment-accent" style="background: ${colors.accent}"></div>
