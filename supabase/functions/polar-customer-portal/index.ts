@@ -6,7 +6,7 @@
  * 
  * Authentication:
  * - Requires Authorization header with Supabase JWT
- * - Verifies user and looks up their Polar customer ID from profiles table
+ * - Looks up customer by external_id (Supabase user ID) in Polar
  * 
  * Environment Variables:
  * - POLAR_MODE: "production" (default) or "sandbox"
@@ -48,6 +48,45 @@ function getPolarConfig(): { apiUrl: string; accessToken: string | undefined; mo
     accessToken: Deno.env.get("POLAR_ACCESS_TOKEN"),
     mode: "production",
   };
+}
+
+/**
+ * Look up a Polar customer by their external_id (Supabase user ID)
+ */
+async function findCustomerByExternalId(
+  apiUrl: string, 
+  accessToken: string, 
+  externalId: string
+): Promise<string | null> {
+  console.log("[polar-customer-portal] Looking up customer by external_id:", externalId);
+  
+  const response = await fetch(
+    `${apiUrl}/customers/?external_id=${encodeURIComponent(externalId)}`,
+    {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  
+  if (!response.ok) {
+    console.error("[polar-customer-portal] Failed to lookup customer:", response.status);
+    return null;
+  }
+  
+  const data = await response.json();
+  console.log("[polar-customer-portal] Customer lookup response:", JSON.stringify(data).substring(0, 500));
+  
+  // The API returns { items: [...], pagination: {...} }
+  if (data.items && data.items.length > 0) {
+    const customer = data.items[0];
+    console.log("[polar-customer-portal] Found customer:", customer.id);
+    return customer.id;
+  }
+  
+  return null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -108,31 +147,37 @@ Deno.serve(async (req: Request) => {
     
     console.log("[polar-customer-portal] Authenticated user:", user.id);
     
-    // Get the Polar Customer ID from the user's profile
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("polar_customer_id")
-      .eq("id", user.id)
-      .single();
+    // First, try to find customer by external_id (Supabase user ID)
+    // This is more reliable than using stored polar_customer_id which might be stale
+    let customerId = await findCustomerByExternalId(apiUrl, accessToken, user.id);
+    
+    // If not found by external_id, try the stored polar_customer_id as fallback
+    if (!customerId) {
+      console.log("[polar-customer-portal] Customer not found by external_id, checking profile...");
       
-    if (profileError) {
-      console.error("[polar-customer-portal] Profile error:", profileError.message);
-      return new Response(JSON.stringify({ error: "Could not fetch user profile" }), { 
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      });
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("polar_customer_id")
+        .eq("id", user.id)
+        .single();
+        
+      if (profileError) {
+        console.error("[polar-customer-portal] Profile error:", profileError.message);
+      } else if (profile?.polar_customer_id) {
+        console.log("[polar-customer-portal] Found polar_customer_id in profile:", profile.polar_customer_id);
+        customerId = profile.polar_customer_id;
+      }
     }
     
-    if (!profile?.polar_customer_id) {
-      console.error("[polar-customer-portal] No polar_customer_id for user:", user.id);
-      return new Response(JSON.stringify({ error: "No subscription found for this user" }), { 
+    if (!customerId) {
+      console.error("[polar-customer-portal] No Polar customer found for user:", user.id);
+      return new Response(JSON.stringify({ error: "No subscription found. Please subscribe first." }), { 
         status: 404,
         headers: { "Content-Type": "application/json" }
       });
     }
     
-    const customerId = profile.polar_customer_id;
-    console.log("[polar-customer-portal] Polar Customer ID:", customerId);
+    console.log("[polar-customer-portal] Using Polar Customer ID:", customerId);
 
     // Create customer session via Polar API
     console.log("[polar-customer-portal] Creating customer session...");
@@ -160,6 +205,16 @@ Deno.serve(async (req: Request) => {
       console.log("[polar-customer-portal] Polar API response:", responseText.substring(0, 500));
 
       if (!response.ok) {
+        // If the stored customer ID doesn't exist, provide helpful error
+        if (response.status === 422 && responseText.includes("Customer does not exist")) {
+          return new Response(JSON.stringify({ 
+            error: "Your subscription data is out of sync. Please contact support or try subscribing again." 
+          }), { 
+            status: 404,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        
         return new Response(JSON.stringify({ error: `Portal creation failed: ${responseText}` }), { 
           status: response.status,
           headers: { "Content-Type": "application/json" }
