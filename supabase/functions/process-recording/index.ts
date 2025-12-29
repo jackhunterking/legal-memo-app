@@ -347,35 +347,101 @@ async function transcribeAudio(
   throw new Error("AssemblyAI transcription timed out");
 }
 
+// Meeting context for summary generation
+interface MeetingContext {
+  title?: string | null;
+  contactName?: string | null;
+  contactCompany?: string | null;
+  meetingType?: string | null;
+  expectedSpeakers: number;
+  speakerNames?: SpeakerMapping;
+}
+
 // Step 3: Generate summary using LeMUR
 // LeMUR is AssemblyAI's LLM that works with any transcript, regardless of speech model
-// This is more reliable than built-in summarization which may have model restrictions
+// Now uses context-aware prompts with structured output format
 async function generateSummaryWithLemur(
   transcriptId: string,
-  assemblyAIKey: string
+  assemblyAIKey: string,
+  meetingContext?: MeetingContext
 ): Promise<string> {
   console.log("[ProcessRecording] Generating summary with LeMUR...");
   console.log(`[ProcessRecording] Transcript ID for summary: ${transcriptId}`);
 
   try {
-    // Use LeMUR summary endpoint with correct parameters
-    // Valid models: anthropic/claude-3-opus, anthropic/claude-3-haiku, anthropic/claude-sonnet-4-20250514
-    const requestBody = {
-      transcript_ids: [transcriptId],
-      context: "This is a legal meeting transcript. Provide a professional summary suitable for legal documentation, highlighting key points, decisions, and action items.",
-      final_model: "anthropic/claude-3-opus",
-    };
+    // Build context section with meeting metadata
+    const contextParts: string[] = [];
     
-    console.log("[ProcessRecording] LeMUR request body:", JSON.stringify(requestBody));
+    if (meetingContext?.title) {
+      contextParts.push(`Meeting Title: "${meetingContext.title}"`);
+    }
+    if (meetingContext?.meetingType) {
+      contextParts.push(`Meeting Type: ${meetingContext.meetingType}`);
+    }
+    if (meetingContext?.contactName) {
+      const contactInfo = meetingContext.contactCompany 
+        ? `${meetingContext.contactName} (${meetingContext.contactCompany})`
+        : meetingContext.contactName;
+      contextParts.push(`Primary Contact/Client: ${contactInfo}`);
+    }
+    contextParts.push(`Number of Participants: ${meetingContext?.expectedSpeakers || 2}`);
+    
+    // Add speaker name mapping if available
+    if (meetingContext?.speakerNames && Object.keys(meetingContext.speakerNames).length > 0) {
+      const speakerList = Object.entries(meetingContext.speakerNames)
+        .map(([label, name]) => `${label} = ${name}`)
+        .join(', ');
+      contextParts.push(`Identified Speakers: ${speakerList}`);
+    }
 
-    // Note: LeMUR endpoint is NOT under /v2, it's directly on api.assemblyai.com
-    const response = await fetch("https://api.assemblyai.com/lemur/v3/generate/summary", {
+    const contextSection = contextParts.length > 0 
+      ? `\n\nMeeting Context:\n${contextParts.join('\n')}\n` 
+      : '';
+
+    const systemContext = `You are a legal documentation assistant specializing in meeting summaries for attorneys and legal professionals. Your summaries must be accurate, professional, and suitable for case files.${contextSection}`;
+
+    const prompt = `Analyze this legal meeting transcript and provide a comprehensive summary with the following structure:
+
+## Meeting Overview
+A 2-3 sentence high-level summary of the meeting purpose and outcome.
+
+## Key Discussion Points
+Bullet points of the main topics discussed, in order of importance.
+
+## Decisions Made
+Any decisions or agreements reached during the meeting. If none, write "No formal decisions recorded."
+
+## Action Items
+Clear action items with responsible parties (use identified speaker names when available). If none, write "No action items identified."
+
+## Notable Statements
+Any legally significant statements, admissions, or quotes worth highlighting. If none, omit this section.
+
+## Follow-up Required
+Items that need follow-up or further attention. If none, write "No immediate follow-up required."
+
+Guidelines:
+- Use the identified speaker names when referring to participants (e.g., "John Smith" instead of "Speaker A")
+- Be precise with dates, numbers, and legal terminology mentioned
+- Keep the tone professional and objective
+- Flag any potential concerns or issues for attorney review`;
+    
+    console.log("[ProcessRecording] LeMUR context:", systemContext.substring(0, 200) + "...");
+
+    // Use LeMUR Task endpoint for more flexible prompting
+    const response = await fetch("https://api.assemblyai.com/lemur/v3/generate/task", {
       method: "POST",
       headers: {
         Authorization: assemblyAIKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({
+        transcript_ids: [transcriptId],
+        prompt: prompt,
+        context: systemContext,
+        final_model: "anthropic/claude-3-opus",
+        max_output_size: 4000,
+      }),
     });
 
     const responseText = await response.text();
@@ -400,6 +466,90 @@ async function generateSummaryWithLemur(
   } catch (error) {
     console.error("[ProcessRecording] LeMUR error:", error);
     return "Summary generation encountered an error.";
+  }
+}
+
+// Step 3.5: Enhance speaker identification using LeMUR
+// Analyzes transcript to identify speakers by name from context clues
+interface SpeakerMapping {
+  [key: string]: string; // e.g., {"Speaker A": "John Smith (Attorney)", "Speaker B": "Client"}
+}
+
+async function enhanceTranscriptSpeakers(
+  transcriptId: string,
+  assemblyAIKey: string,
+  meetingContext: {
+    contactName?: string | null;
+    contactCompany?: string | null;
+    expectedSpeakers: number;
+  }
+): Promise<SpeakerMapping> {
+  console.log("[ProcessRecording] Enhancing speaker identification with LeMUR...");
+
+  const contextHints: string[] = [];
+  if (meetingContext.contactName) {
+    contextHints.push(`Known participant: ${meetingContext.contactName}${meetingContext.contactCompany ? ` (${meetingContext.contactCompany})` : ''}`);
+  }
+  contextHints.push(`Expected number of speakers: ${meetingContext.expectedSpeakers}`);
+
+  const prompt = `Analyze this transcript and identify the speakers based on contextual clues.
+
+Look for:
+1. Self-introductions ("Hi, I'm John Smith...", "This is Jane from...")
+2. How speakers address each other by name ("Thanks, Michael", "John, can you...")
+3. Role indicators (attorney-client dynamics, expert testimony patterns)
+4. Professional identifiers mentioned ("As your attorney...", "Speaking as the defendant...")
+
+${contextHints.join('\n')}
+
+Return ONLY a valid JSON object mapping speaker labels to identified names/roles.
+Format: {"Speaker A": "Name or Role", "Speaker B": "Name or Role"}
+
+Rules:
+- If you can confidently identify a speaker's name, use it
+- If you can only identify their role, use a descriptive label like "Attorney", "Client", "Witness"
+- If you cannot identify anything about a speaker, keep the original label like "Speaker A"
+- Do not make up names - only use names that are explicitly mentioned in the transcript
+
+Return ONLY the JSON object, no other text or explanation.`;
+
+  try {
+    const response = await fetch("https://api.assemblyai.com/lemur/v3/generate/task", {
+      method: "POST",
+      headers: {
+        Authorization: assemblyAIKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        transcript_ids: [transcriptId],
+        prompt: prompt,
+        final_model: "anthropic/claude-3-haiku", // Haiku is faster/cheaper for this task
+        max_output_size: 500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn("[ProcessRecording] Speaker enhancement failed:", errorText);
+      return {};
+    }
+
+    const result = await response.json() as { response?: string };
+    const responseText = result.response || "";
+    
+    // Extract JSON from response (handle potential text around it)
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn("[ProcessRecording] No valid JSON in speaker enhancement response");
+      return {};
+    }
+
+    const mapping = JSON.parse(jsonMatch[0]) as SpeakerMapping;
+    console.log("[ProcessRecording] Speaker mapping identified:", JSON.stringify(mapping));
+    return mapping;
+  } catch (error) {
+    console.warn("[ProcessRecording] Speaker enhancement error:", error);
+    return {};
   }
 }
 
@@ -511,10 +661,14 @@ Deno.serve(async (req: Request) => {
     // Initialize Supabase client
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Fetch meeting details
+    // Fetch meeting details with related data for context-aware processing
     const { data: meeting, error: meetingError } = await supabase
       .from("meetings")
-      .select("*")
+      .select(`
+        *,
+        contact:contacts(id, first_name, last_name, company),
+        meeting_type:meeting_types(id, name)
+      `)
       .eq("id", meetingId)
       .single();
 
@@ -526,7 +680,15 @@ Deno.serve(async (req: Request) => {
       throw new Error("Meeting has no audio file");
     }
 
+    // Build meeting context for AI processing
+    const contactName = meeting.contact 
+      ? `${meeting.contact.first_name}${meeting.contact.last_name ? ' ' + meeting.contact.last_name : ''}`.trim()
+      : null;
+    const contactCompany = meeting.contact?.company || null;
+    const meetingTypeName = meeting.meeting_type?.name || null;
+
     console.log(`[ProcessRecording] Found meeting, audio: ${meeting.raw_audio_path}`);
+    console.log(`[ProcessRecording] Context: title="${meeting.title}", contact="${contactName}", type="${meetingTypeName}"`);
 
     // Get expected speakers and language from meeting (with defaults)
     const expectedSpeakers = meeting.expected_speakers || 2;
@@ -605,12 +767,36 @@ Deno.serve(async (req: Request) => {
     const { transcript, speechModel, detectedSpeakers, speakerMismatch } = transcriptionResult;
 
     // ============================================
-    // STEP 4: Generate summary using LeMUR
+    // STEP 4: Enhance speaker identification using AI
     // ============================================
-    const summary = await generateSummaryWithLemur(transcript.id, assemblyAIKey);
+    const speakerNames = await enhanceTranscriptSpeakers(
+      transcript.id,
+      assemblyAIKey,
+      {
+        contactName,
+        contactCompany,
+        expectedSpeakers,
+      }
+    );
 
     // ============================================
-    // STEP 5: Update meeting with speaker validation results
+    // STEP 5: Generate summary using LeMUR with context
+    // ============================================
+    const summary = await generateSummaryWithLemur(
+      transcript.id,
+      assemblyAIKey,
+      {
+        title: meeting.title,
+        contactName,
+        contactCompany,
+        meetingType: meetingTypeName,
+        expectedSpeakers,
+        speakerNames,
+      }
+    );
+
+    // ============================================
+    // STEP 6: Update meeting with speaker validation results and AI speaker names
     // ============================================
     console.log("[ProcessRecording] Updating meeting with transcription metadata...");
     await supabase
@@ -620,11 +806,12 @@ Deno.serve(async (req: Request) => {
         speaker_mismatch: speakerMismatch,
         transcription_language: language,
         speech_model_used: speechModel,
+        speaker_names: Object.keys(speakerNames).length > 0 ? speakerNames : null,
       })
       .eq("id", meetingId);
 
     // ============================================
-    // STEP 6: Save transcript and segments
+    // STEP 7: Save transcript and segments
     // ============================================
     console.log("[ProcessRecording] Saving transcript...");
 
@@ -647,12 +834,16 @@ Deno.serve(async (req: Request) => {
     }
 
     // Save transcript segments (utterances with speaker info)
+    // Use AI-identified speaker names if available, otherwise default to "Speaker X"
     if (transcript.utterances && transcript.utterances.length > 0) {
       const segments = transcript.utterances.map((utterance) => {
         // Format speaker label: "A" -> "Speaker A", "B" -> "Speaker B", etc.
-        const speakerLabel = utterance.speaker.toLowerCase().startsWith('speaker') 
+        const defaultLabel = utterance.speaker.toLowerCase().startsWith('speaker') 
           ? utterance.speaker 
           : `Speaker ${utterance.speaker}`;
+        
+        // Use AI-identified name if available
+        const speakerLabel = speakerNames[defaultLabel] || defaultLabel;
         
         return {
           meeting_id: meetingId,
@@ -676,7 +867,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================
-    // STEP 7: Record usage and send to Polar
+    // STEP 8: Record usage and send to Polar
     // ============================================
     let usageResult: UsageResult | null = null;
     if (meeting.duration_seconds > 0) {
@@ -693,7 +884,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================
-    // STEP 8: Update status to ready
+    // STEP 9: Update status to ready
     // ============================================
     await updateJobStatus(supabase, meetingId, "completed", null);
     await updateMeetingStatus(supabase, meetingId, "ready");
@@ -716,6 +907,7 @@ Deno.serve(async (req: Request) => {
           expected: expectedSpeakers,
           detected: detectedSpeakers,
           mismatch: speakerMismatch,
+          identified_names: Object.keys(speakerNames).length > 0 ? speakerNames : null,
         },
         model: {
           speech_model: speechModel,

@@ -32,6 +32,7 @@ import {
   useAudioPlayerStatus,
   setAudioModeAsync,
 } from "expo-audio";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useLocalSearchParams, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -103,15 +104,30 @@ const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 import { PLAYBACK_AUDIO_MODE } from "@/lib/audio-config";
-import { User, Plus, DollarSign } from "lucide-react-native";
+import { User, Plus, DollarSign, Pencil } from "lucide-react-native";
 import { useAuth } from "@/contexts/AuthContext";
 import { Switch } from "react-native";
 import DraggableBottomSheet from "@/components/DraggableBottomSheet";
+import SpeakerNamesModal from "@/components/SpeakerNamesModal";
 
 /**
  * Format speaker label from "A", "B", "C" to "Speaker A", "Speaker B", "Speaker C"
+ * If speakerNames mapping is provided, use the custom name if available
  */
-const formatSpeakerLabel = (speaker: string): string => {
+const formatSpeakerLabel = (
+  speaker: string, 
+  speakerNames?: Record<string, string> | null
+): string => {
+  // If speakerNames mapping has a custom name for this speaker, use it
+  if (speakerNames && speakerNames[speaker]) {
+    return speakerNames[speaker];
+  }
+  
+  // If the speaker is already a custom name (not starting with "Speaker"), return as is
+  if (!speaker.toLowerCase().startsWith('speaker') && speaker.length > 1) {
+    return speaker;
+  }
+  
   // If already formatted (e.g., "Speaker A"), return as is
   if (speaker.toLowerCase().startsWith('speaker')) {
     return speaker;
@@ -148,11 +164,13 @@ const TranscriptBottomSheet = ({
   visible,
   onClose,
   segments,
+  speakerNames,
   onSeek,
 }: {
   visible: boolean;
   onClose: () => void;
   segments?: Array<{ id: string; speaker: string; text: string; start_ms: number; end_ms: number }>;
+  speakerNames?: Record<string, string> | null;
   onSeek?: (ms: number) => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -160,7 +178,7 @@ const TranscriptBottomSheet = ({
   const filteredSegments = segments?.filter((segment) => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
-    const speakerLabel = formatSpeakerLabel(segment.speaker).toLowerCase();
+    const speakerLabel = formatSpeakerLabel(segment.speaker, speakerNames).toLowerCase();
     return segment.text.toLowerCase().includes(query) || speakerLabel.includes(query);
   }) || [];
 
@@ -202,7 +220,7 @@ const TranscriptBottomSheet = ({
             <View style={[styles.segmentAccentBar, { backgroundColor: getSpeakerColors(segment.speaker).accent }]} />
             <View style={styles.segmentContent}>
               <Text style={[styles.transcriptSpeakerLabel, { color: getSpeakerColors(segment.speaker).text }]}>
-                {formatSpeakerLabel(segment.speaker)}
+                {formatSpeakerLabel(segment.speaker, speakerNames)}
               </Text>
               <Text style={styles.transcriptSegmentText}>{segment.text}</Text>
               <Text style={styles.transcriptTimestamp}>{formatTimestamp(segment.start_ms)}</Text>
@@ -1540,6 +1558,8 @@ export default function MeetingDetailScreen() {
     isTogglingShare,
     submitSpeakerFeedback,
     isSubmittingFeedback,
+    updateSpeakerNames,
+    isUpdatingSpeakerNames,
   } = useMeetings();
   const { contacts } = useContacts();
   const { profile } = useAuth();
@@ -1560,6 +1580,7 @@ export default function MeetingDetailScreen() {
   const [showEditName, setShowEditName] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showSpeakerFeedback, setShowSpeakerFeedback] = useState(false);
+  const [showSpeakerNames, setShowSpeakerNames] = useState(false);
   const [progressBarWidth, setProgressBarWidth] = useState(0);
 
   // Audio loading state
@@ -2220,7 +2241,9 @@ export default function MeetingDetailScreen() {
 
         {/* Summary Card */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Summary</Text>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Summary</Text>
+          </View>
           {transcript?.summary && 
            transcript.summary !== 'Summary not available.' && 
            transcript.summary !== 'Summary generation failed. Please retry processing.' &&
@@ -2241,12 +2264,12 @@ export default function MeetingDetailScreen() {
         {(segments && segments.length > 0) || transcript?.full_text ? (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
+              <View style={styles.transcriptHeaderLeft}>
                 <Text style={styles.cardTitle}>Transcript</Text>
-                {/* Feedback button - show when meeting has segments */}
+                {/* Feedback button - next to title */}
                 {segments && segments.length > 0 && (
                   <Pressable
-                    style={styles.feedbackButton}
+                    style={styles.transcriptFeedbackButton}
                     onPress={() => setShowSpeakerFeedback(true)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
@@ -2254,32 +2277,57 @@ export default function MeetingDetailScreen() {
                   </Pressable>
                 )}
               </View>
-              <Pressable onPress={() => setShowTranscript(true)}>
-                <Text style={styles.viewAllLink}>
-                  {segments && segments.length > 0 
-                    ? `View All (${segments.length})` 
-                    : 'View Full'}
-                </Text>
-              </Pressable>
+              {/* Edit Names button - right side of header */}
+              {segments && segments.length > 0 && (
+                <Pressable
+                  style={styles.editNamesButton}
+                  onPress={() => {
+                    lightImpact();
+                    setShowSpeakerNames(true);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Pencil size={14} color={Colors.accentLight} />
+                  <Text style={styles.editNamesButtonText}>Edit Names</Text>
+                </Pressable>
+              )}
             </View>
             {segments && segments.length > 0 ? (
-              segments.slice(0, 2).map((segment) => (
-                <View key={segment.id} style={styles.previewSegmentCard}>
-                  <View style={[styles.previewAccentBar, { backgroundColor: getSpeakerColors(segment.speaker).accent }]} />
-                  <View style={styles.previewSegmentContent}>
-                    <Text style={[styles.previewSpeakerLabel, { color: getSpeakerColors(segment.speaker).text }]}>
-                      {formatSpeakerLabel(segment.speaker)}
-                    </Text>
-                    <Text style={styles.previewSegmentText} numberOfLines={2}>
-                      {segment.text}
-                    </Text>
+              <View style={styles.transcriptPreviewContainer}>
+                {segments.slice(0, 2).map((segment) => (
+                  <View key={segment.id} style={styles.previewSegmentCard}>
+                    <View style={[styles.previewAccentBar, { backgroundColor: getSpeakerColors(segment.speaker).accent }]} />
+                    <View style={styles.previewSegmentContent}>
+                      <Text style={[styles.previewSpeakerLabel, { color: getSpeakerColors(segment.speaker).text }]}>
+                        {formatSpeakerLabel(segment.speaker, meeting.speaker_names)}
+                      </Text>
+                      <Text style={styles.previewSegmentText} numberOfLines={2}>
+                        {segment.text}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              ))
+                ))}
+                {/* View All overlay at bottom */}
+                <Pressable 
+                  style={styles.viewAllOverlay}
+                  onPress={() => setShowTranscript(true)}
+                >
+                  <LinearGradient
+                    colors={['transparent', Colors.surface]}
+                    style={styles.viewAllGradient}
+                  />
+                  <Text style={styles.viewAllButtonText}>
+                    View All ({segments.length})
+                  </Text>
+                </Pressable>
+              </View>
             ) : (
-              <Text style={styles.transcriptPreview} numberOfLines={4}>
-                {transcript?.full_text}
-              </Text>
+              <Pressable onPress={() => setShowTranscript(true)}>
+                <Text style={styles.transcriptPreview} numberOfLines={4}>
+                  {transcript?.full_text}
+                </Text>
+                <Text style={styles.viewAllLink}>View Full</Text>
+              </Pressable>
             )}
           </View>
         ) : null}
@@ -2366,6 +2414,7 @@ export default function MeetingDetailScreen() {
         visible={showTranscript}
         onClose={() => setShowTranscript(false)}
         segments={segments}
+        speakerNames={meeting.speaker_names}
         onSeek={handleSeekToTimestamp}
       />
 
@@ -2428,6 +2477,22 @@ export default function MeetingDetailScreen() {
           });
         }}
         isSubmitting={isSubmittingFeedback}
+      />
+
+      {/* Speaker Names Modal */}
+      <SpeakerNamesModal
+        visible={showSpeakerNames}
+        onClose={() => setShowSpeakerNames(false)}
+        speakers={segments ? [...new Set(segments.map(s => s.speaker))] : []}
+        currentNames={meeting.speaker_names}
+        onSave={async (speakerNames) => {
+          await updateSpeakerNames({
+            meetingId: meeting.id,
+            speakerNames,
+            updateSegments: false,
+          });
+        }}
+        isSaving={isUpdatingSpeakerNames}
       />
 
       {/* Quick Actions Menu Modal */}
@@ -2742,8 +2807,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+  transcriptHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    height: 48,
+  },
+  transcriptFeedbackButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  transcriptPreviewContainer: {
+    position: "relative",
+  },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: "600",
     color: Colors.text,
     marginBottom: 12,
@@ -2755,12 +2837,51 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceLight,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
+  },
+  editNamesButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    height: 32,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.accentLight + "40",
+  },
+  editNamesButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Colors.accentLight,
   },
   viewAllLink: {
     fontSize: 14,
     color: Colors.accentLight,
     fontWeight: "500",
+    marginTop: 8,
+  },
+  viewAllOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: -16,
+    right: -16,
+    zIndex: 10,
+    alignItems: "center",
+    paddingTop: 40,
+    paddingBottom: 16,
+  },
+  viewAllGradient: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  viewAllButtonText: {
+    fontSize: 14,
+    color: Colors.accentLight,
+    fontWeight: "600",
   },
   summaryText: {
     fontSize: 15,

@@ -47,6 +47,7 @@ Stores meeting recordings and metadata.
 | expected_speakers | integer | Number of expected speakers (1=solo, 2=default, 3+=group) |
 | detected_speakers | integer | Actual speakers detected by AssemblyAI |
 | speaker_mismatch | boolean | True if detected_speakers != expected_speakers |
+| speaker_names | jsonb | Custom speaker name mappings set by user or AI (e.g., {"Speaker A": "John Smith"}) |
 | transcription_language | text | Language code used for transcription (default: 'en') |
 | speech_model_used | text | AssemblyAI model used: 'slam-1' (English) or 'best' (Universal) |
 | meeting_type_id | uuid | Reference to meeting_types |

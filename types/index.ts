@@ -572,6 +572,10 @@ export interface Meeting {
   detected_speakers: number | null;      // Actual speakers detected by AssemblyAI
   speaker_mismatch: boolean;             // True if detected != expected
   
+  // Custom speaker names (set by user or AI)
+  // Keys are original labels (Speaker A, Speaker B), values are custom names
+  speaker_names: Record<string, string> | null;
+  
   // Transcription settings
   transcription_language: string;        // Language code (default: 'en')
   speech_model_used: string | null;      // Model used: 'slam-1' or 'best'

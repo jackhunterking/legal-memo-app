@@ -674,6 +674,68 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     },
   });
 
+  // ============================================
+  // SPEAKER NAMES & SUMMARY REGENERATION
+  // ============================================
+
+  // Update speaker names and optionally update transcript segments
+  const updateSpeakerNamesMutation = useMutation({
+    mutationFn: async ({
+      meetingId,
+      speakerNames,
+      updateSegments = true,
+    }: {
+      meetingId: string;
+      speakerNames: Record<string, string>;
+      updateSegments?: boolean;
+    }): Promise<void> => {
+      if (!user?.id) throw new Error('Not authenticated');
+      
+      console.log('[MeetingContext] Updating speaker names for meeting:', meetingId);
+      console.log('[MeetingContext] Speaker names:', speakerNames);
+      
+      // Update the meeting with new speaker names
+      const { error: meetingError } = await supabase
+        .from('meetings')
+        .update({ speaker_names: speakerNames })
+        .eq('id', meetingId)
+        .eq('user_id', user.id);
+      
+      if (meetingError) {
+        console.error('[MeetingContext] Error updating meeting speaker names:', meetingError.message);
+        throw new Error(meetingError.message || 'Failed to update speaker names');
+      }
+      
+      // Optionally update transcript segments with new speaker names
+      if (updateSegments) {
+        console.log('[MeetingContext] Updating transcript segments with new speaker names...');
+        
+        // Update each speaker label in the segments
+        for (const [oldLabel, newName] of Object.entries(speakerNames)) {
+          if (oldLabel !== newName) {
+            const { error: segmentError } = await supabase
+              .from('transcript_segments')
+              .update({ speaker: newName })
+              .eq('meeting_id', meetingId)
+              .eq('speaker', oldLabel);
+            
+            if (segmentError) {
+              console.warn('[MeetingContext] Error updating segment for', oldLabel, ':', segmentError.message);
+            } else {
+              console.log('[MeetingContext] Updated segments:', oldLabel, '->', newName);
+            }
+          }
+        }
+      }
+      
+      console.log('[MeetingContext] Speaker names updated successfully');
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['meetings'] });
+      queryClient.invalidateQueries({ queryKey: ['meeting', variables.meetingId] });
+    },
+  });
+
   return {
     // Meeting data
     meetings: meetingsQuery.data || [],
@@ -729,6 +791,10 @@ export const [MeetingProvider, useMeetings] = createContextHook(() => {
     // Speaker feedback actions
     submitSpeakerFeedback: submitSpeakerFeedbackMutation.mutateAsync,
     isSubmittingFeedback: submitSpeakerFeedbackMutation.isPending,
+    
+    // Speaker names actions
+    updateSpeakerNames: updateSpeakerNamesMutation.mutateAsync,
+    isUpdatingSpeakerNames: updateSpeakerNamesMutation.isPending,
   };
 });
 

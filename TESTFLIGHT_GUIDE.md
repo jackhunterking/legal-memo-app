@@ -8,12 +8,13 @@ This comprehensive guide walks you through the entire process of building, uploa
 2. [Apple Developer Portal Setup](#apple-developer-portal-setup)
 3. [App Store Connect Setup](#app-store-connect-setup)
 4. [Environment Configuration](#environment-configuration)
-5. [Building the App](#building-the-app)
-6. [Uploading to TestFlight](#uploading-to-testflight)
-7. [Managing TestFlight](#managing-testflight)
-8. [Submitting Updates](#submitting-updates)
-9. [Common Issues and Solutions](#common-issues-and-solutions)
-10. [Version Management](#version-management)
+5. [EAS Build & Submit (Recommended)](#eas-build--submit-recommended)
+6. [Building the App (Manual Xcode)](#building-the-app-manual-xcode)
+7. [Uploading to TestFlight](#uploading-to-testflight)
+8. [Managing TestFlight](#managing-testflight)
+9. [Submitting Updates](#submitting-updates)
+10. [Common Issues and Solutions](#common-issues-and-solutions)
+11. [Version Management](#version-management)
 
 ---
 
@@ -156,7 +157,207 @@ Your server at `use.legalmemo.app` needs to host the Apple App Site Association 
 
 ---
 
-## Building the App
+## EAS Build & Submit (Recommended)
+
+EAS (Expo Application Services) is the recommended way to build and submit your app to TestFlight. It handles code signing, builds in the cloud, and submits directly to App Store Connect.
+
+### Prerequisites
+
+1. **Install EAS CLI globally**:
+```bash
+npm install -g eas-cli
+```
+
+2. **Login to your Expo account**:
+```bash
+eas login
+```
+
+3. **Verify you're logged in**:
+```bash
+eas whoami
+```
+
+### Quick Reference Commands
+
+```bash
+# Navigate to project directory
+cd /Users/metinhakanokuyucu/rork-legal-meeting-assistant
+
+# Build for TestFlight (production build)
+eas build --platform ios --profile production
+
+# Build and auto-submit to TestFlight in one command
+eas build --platform ios --profile production --auto-submit
+
+# Submit an existing build to TestFlight
+eas submit --platform ios --latest
+
+# Submit a specific build to TestFlight
+eas submit --platform ios --id BUILD_ID
+
+# Check build status
+eas build:list --platform ios
+
+# View build details
+eas build:view BUILD_ID
+```
+
+### Step-by-Step: First Time Setup
+
+#### 1. Configure EAS Project
+
+```bash
+# Initialize EAS for your project (if not already done)
+eas build:configure
+```
+
+#### 2. Setup Apple Credentials
+
+EAS will prompt you for Apple credentials during the first build:
+
+```bash
+eas credentials
+
+# Or configure credentials for iOS specifically
+eas credentials --platform ios
+```
+
+You'll need:
+- Apple ID and App-Specific Password (generate at appleid.apple.com)
+- Apple Developer Team ID: `6G65A4B7Y5`
+
+#### 3. Build for Production (TestFlight)
+
+```bash
+# Start a production build for iOS
+eas build --platform ios --profile production
+```
+
+This command will:
+- Upload your project to EAS Build servers
+- Create or use existing certificates and provisioning profiles
+- Build your app in the cloud
+- Provide a download link when complete
+
+Build takes approximately **15-30 minutes**.
+
+#### 4. Submit to TestFlight
+
+**Option A: Auto-submit during build**
+```bash
+eas build --platform ios --profile production --auto-submit
+```
+
+**Option B: Submit after build completes**
+```bash
+# Submit the latest successful build
+eas submit --platform ios --latest
+
+# Or submit a specific build by ID
+eas submit --platform ios --id BUILD_ID
+```
+
+### Build Profiles Explained
+
+Your `eas.json` has these profiles configured:
+
+| Profile | Command | Use Case |
+|---------|---------|----------|
+| `development` | `eas build --profile development` | Development client with expo-dev-client |
+| `preview` | `eas build --profile preview` | Internal testing builds |
+| `production` | `eas build --profile production` | TestFlight & App Store builds |
+
+### Environment Variables in EAS
+
+Set secret environment variables for production builds:
+
+```bash
+# Set a secret (not visible in logs)
+eas secret:create --name EXPO_PUBLIC_SUPABASE_URL --value "https://your-project.supabase.co" --scope project
+
+# List all secrets
+eas secret:list
+
+# Delete a secret
+eas secret:delete --name SECRET_NAME
+```
+
+### Useful EAS Commands
+
+```bash
+# List all your builds
+eas build:list
+
+# List only iOS builds
+eas build:list --platform ios
+
+# Get details of a specific build
+eas build:view BUILD_ID
+
+# Cancel a running build
+eas build:cancel BUILD_ID
+
+# Download build artifact
+eas build:download --id BUILD_ID
+
+# Check your project configuration
+eas diagnostics
+
+# Update over-the-air (for JS-only changes)
+eas update --branch production --message "Bug fixes"
+```
+
+### Full Workflow Example
+
+```bash
+# 1. Navigate to project
+cd /Users/metinhakanokuyucu/rork-legal-meeting-assistant
+
+# 2. Make sure you're logged in
+eas whoami
+
+# 3. Build and submit to TestFlight in one command
+eas build --platform ios --profile production --auto-submit
+
+# 4. Monitor build status (copy build ID from output)
+eas build:view BUILD_ID
+
+# 5. Once submitted, check TestFlight in App Store Connect
+# Build will appear in ~5-30 minutes after submission
+```
+
+### Troubleshooting EAS Builds
+
+**"Apple credentials not found"**
+```bash
+eas credentials --platform ios
+# Follow prompts to set up credentials
+```
+
+**"Build failed - check logs"**
+```bash
+# View detailed build logs
+eas build:view BUILD_ID --logs
+```
+
+**"Invalid provisioning profile"**
+```bash
+# Clear and regenerate credentials
+eas credentials --platform ios
+# Select "Remove" then re-run build
+```
+
+**Force a clean build**
+```bash
+eas build --platform ios --profile production --clear-cache
+```
+
+---
+
+## Building the App (Manual Xcode)
+
+> **Note**: The EAS Build method above is recommended. Use this manual method only if you need local builds or have specific requirements.
 
 ### Step 1: Clean Previous Builds
 
@@ -353,7 +554,26 @@ External testers require Apple's Beta App Review:
 | Version (CFBundleShortVersionString) | `1.0.0` | Major features, public releases |
 | Build (CFBundleVersion) | `1`, `2`, `3` | Every TestFlight upload |
 
-### Update Workflow
+### Update Workflow with EAS (Recommended)
+
+EAS automatically handles build number incrementing with the `autoIncrement: true` setting in your `eas.json`.
+
+```bash
+# 1. Make your code changes
+
+# 2. Build and submit (build number auto-increments)
+eas build --platform ios --profile production --auto-submit
+
+# That's it! EAS handles everything.
+```
+
+**For JavaScript-only changes (OTA Update):**
+```bash
+# Push updates without a new build (instant for users)
+eas update --branch production --message "Bug fixes and improvements"
+```
+
+### Update Workflow with Xcode (Manual)
 
 1. Make your code changes
 2. **Increment build number** (required for each upload)
@@ -367,7 +587,7 @@ External testers require Apple's Beta App Review:
 5. Upload to App Store Connect
 6. Existing testers are automatically notified
 
-### Incrementing Build Number
+### Incrementing Build Number (Manual Method)
 
 **Option 1: In Xcode**
 1. Select project → Target → General tab
@@ -385,6 +605,10 @@ External testers require Apple's Beta App Review:
 }
 ```
 Then run: `npx expo prebuild --platform ios`
+
+**Option 3: Let EAS handle it (Automatic)**
+
+Your `eas.json` already has `autoIncrement: true` for production builds, so EAS will automatically increment the build number for each build.
 
 ---
 
@@ -448,6 +672,36 @@ Each TestFlight upload needs a unique, higher build number.
 
 ## Quick Command Reference
 
+### EAS Build Commands (Recommended)
+
+```bash
+# Navigate to project
+cd /Users/metinhakanokuyucu/rork-legal-meeting-assistant
+
+# Login to Expo (first time only)
+eas login
+
+# Build for TestFlight
+eas build --platform ios --profile production
+
+# Build AND auto-submit to TestFlight
+eas build --platform ios --profile production --auto-submit
+
+# Submit latest build to TestFlight
+eas submit --platform ios --latest
+
+# Check build status
+eas build:list --platform ios
+
+# View specific build details
+eas build:view BUILD_ID
+
+# Clear cache and rebuild
+eas build --platform ios --profile production --clear-cache
+```
+
+### Manual Xcode Build Commands
+
 ```bash
 # Full clean build
 cd /Users/metinhakanokuyucu/rork-legal-meeting-assistant
@@ -474,9 +728,18 @@ grep -A1 "CFBundleVersion" ios/LegalMemo/Info.plist
 2. ✅ **App Store Connect**: Create app with Bundle ID `app.uselegalmemo.ios`
 3. ✅ **Server**: Host apple-app-site-association file at `use.legalmemo.app`
 4. ✅ **Local**: Create `.env.production` with your values
-5. ✅ **Build**: Run clean build commands
-6. ✅ **Xcode**: Archive and Upload
-7. ✅ **App Store Connect**: Add testers in TestFlight
+5. ✅ **Build**: Choose your method:
+   - **EAS (Recommended)**: `eas build --platform ios --profile production --auto-submit`
+   - **Manual Xcode**: Run clean build commands, Archive, and Upload
+6. ✅ **App Store Connect**: Add testers in TestFlight
+
+### Quickest Path to TestFlight
+
+```bash
+# One command to build and submit
+cd /Users/metinhakanokuyucu/rork-legal-meeting-assistant
+eas build --platform ios --profile production --auto-submit
+```
 
 ---
 
