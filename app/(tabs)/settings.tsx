@@ -26,6 +26,7 @@ import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, setBiometricEnabled } from "@/lib/biometrics";
 import { DEFAULT_TYPE_COLORS, MeetingType, ContactCategory, DEFAULT_CONTACT_CATEGORY_COLORS, CURRENCY_SYMBOLS } from "@/types";
 import DraggableBottomSheet from "@/components/DraggableBottomSheet";
+import { supabase } from "@/lib/supabase";
 
 // Meeting Type Editor Modal Component
 const MeetingTypeModal = ({
@@ -640,6 +641,8 @@ export default function SettingsScreen() {
 
   /**
    * Open Polar customer portal for subscription management
+   * Per Polar docs: Make authenticated fetch request, then open returned URL
+   * @see https://polar.sh/docs/integrate/sdk/adapters/supabase
    */
   const handleManageSubscription = async () => {
     if (Platform.OS !== "web") {
@@ -651,39 +654,55 @@ export default function SettingsScreen() {
     try {
       console.log('[Settings] Opening customer portal...');
       
-      const polarCustomerId = subscription?.polar_customer_id;
+      // Get the current session for the JWT
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
       
-      if (!polarCustomerId) {
-        // Try fetching from profile if not in subscription
-        const { data: profileData } = await import("@/lib/supabase").then(m => 
-          m.supabase.from('profiles').select('polar_customer_id').eq('id', user?.id).single()
-        );
-          
-        if (!profileData?.polar_customer_id) {
-          throw new Error('No subscription found');
+      if (!currentSession?.access_token) {
+        throw new Error('Not authenticated. Please sign in again.');
+      }
+      
+      console.log('[Settings] Making authenticated request to portal endpoint...');
+      
+      // Make authenticated request to the edge function
+      // The SDK will verify the JWT, look up the customer ID, and redirect
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/polar-customer-portal`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`,
+          },
+          redirect: 'follow',
         }
-        
-        const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(profileData.polar_customer_id)}`;
-        const canOpen = await Linking.canOpenURL(portalUrl);
-        if (canOpen) {
-          await Linking.openURL(portalUrl);
-        }
+      );
+      
+      console.log('[Settings] Portal response status:', response.status);
+      console.log('[Settings] Portal response URL:', response.url);
+      
+      // The SDK redirects to Polar's customer portal
+      // Check if we got redirected to a Polar URL
+      if (response.url && response.url.includes('polar.sh')) {
+        console.log('[Settings] Opening Polar portal URL:', response.url);
+        await Linking.openURL(response.url);
         return;
       }
-
-      const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(polarCustomerId)}`;
-      console.log('[Settings] Opening portal URL:', portalUrl);
       
-      const canOpen = await Linking.canOpenURL(portalUrl);
-      if (canOpen) {
-        await Linking.openURL(portalUrl);
-      } else {
-        Alert.alert(
-          "Manage Subscription",
-          "Unable to open subscription management. Please try again later.",
-          [{ text: "OK", style: "default" }]
-        );
+      // If not redirected, check for error response
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Settings] Portal error:', errorText);
+        throw new Error(errorText || 'Failed to open subscription portal');
       }
+      
+      // Fallback: try to get URL from response body
+      const responseText = await response.text();
+      console.log('[Settings] Portal response body:', responseText.substring(0, 200));
+      
+      Alert.alert(
+        "Manage Subscription",
+        "Unable to open subscription management. Please try again later.",
+        [{ text: "OK", style: "default" }]
+      );
     } catch (error) {
       console.error('[Settings] Error opening portal:', error);
       Alert.alert(

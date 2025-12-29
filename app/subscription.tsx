@@ -349,6 +349,8 @@ export default function SubscriptionScreen() {
 
   /**
    * Open Polar customer portal for subscription management
+   * Per Polar docs: Make authenticated fetch request, then open returned URL
+   * @see https://polar.sh/docs/integrate/sdk/adapters/supabase
    */
   const handleManageSubscription = useCallback(async () => {
     if (Platform.OS !== "web") {
@@ -360,40 +362,55 @@ export default function SubscriptionScreen() {
     try {
       console.log('[Subscription] Opening customer portal...');
       
-      const polarCustomerId = subscription?.polar_customer_id;
+      // Get the current session for the JWT
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
       
-      if (!polarCustomerId) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('polar_customer_id')
-          .eq('id', user?.id)
-          .single();
-          
-        if (!profile?.polar_customer_id) {
-          throw new Error('No subscription found');
+      if (!currentSession?.access_token) {
+        throw new Error('Not authenticated. Please sign in again.');
+      }
+      
+      console.log('[Subscription] Making authenticated request to portal endpoint...');
+      
+      // Make authenticated request to the edge function
+      // The SDK will verify the JWT, look up the customer ID, and redirect
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/polar-customer-portal`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`,
+          },
+          redirect: 'follow',
         }
-        
-        const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(profile.polar_customer_id)}`;
-        const canOpen = await Linking.canOpenURL(portalUrl);
-        if (canOpen) {
-          await Linking.openURL(portalUrl);
-        }
+      );
+      
+      console.log('[Subscription] Portal response status:', response.status);
+      console.log('[Subscription] Portal response URL:', response.url);
+      
+      // The SDK redirects to Polar's customer portal
+      // Check if we got redirected to a Polar URL
+      if (response.url && response.url.includes('polar.sh')) {
+        console.log('[Subscription] Opening Polar portal URL:', response.url);
+        await Linking.openURL(response.url);
         return;
       }
-
-      const portalUrl = `${SUPABASE_URL}/functions/v1/polar-customer-portal?customerId=${encodeURIComponent(polarCustomerId)}`;
-      console.log('[Subscription] Opening portal URL:', portalUrl);
       
-      const canOpen = await Linking.canOpenURL(portalUrl);
-      if (canOpen) {
-        await Linking.openURL(portalUrl);
-      } else {
-        Alert.alert(
-          "Manage Subscription",
-          "Unable to open subscription management. Please try again later.",
-          [{ text: "OK", style: "default" }]
-        );
+      // If not redirected, check for error response
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Subscription] Portal error:', errorText);
+        throw new Error(errorText || 'Failed to open subscription portal');
       }
+      
+      // Fallback: try to get URL from response body
+      const responseText = await response.text();
+      console.log('[Subscription] Portal response body:', responseText.substring(0, 200));
+      
+      Alert.alert(
+        "Manage Subscription",
+        "Unable to open subscription management. Please try again later.",
+        [{ text: "OK", style: "default" }]
+      );
     } catch (error) {
       console.error('[Subscription] Error opening portal:', error);
       Alert.alert(
@@ -404,7 +421,7 @@ export default function SubscriptionScreen() {
     } finally {
       setIsProcessing(false);
     }
-  }, [subscription?.polar_customer_id, user?.id]);
+  }, [session]);
 
   /**
    * Handle restore purchase
@@ -1059,3 +1076,4 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
 });
+
