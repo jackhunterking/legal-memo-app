@@ -5,15 +5,21 @@ import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
 
 export default function TabsLayout() {
-  const { isAuthenticated, hasCompletedOnboarding, isLoading } = useAuth();
+  const { isAuthenticated, hasCompletedOnboarding, isAuthLoading, isProfileLoading } = useAuth();
 
-  // Show nothing while loading auth state to prevent flash
-  if (isLoading) {
+  // Show nothing while auth is loading to prevent flash
+  if (isAuthLoading) {
+    return null;
+  }
+
+  // If authenticated but profile still loading, wait (don't redirect prematurely)
+  if (isAuthenticated && isProfileLoading) {
     return null;
   }
 
   // Redirect to index for proper routing if not authenticated or no profile
   if (!isAuthenticated || !hasCompletedOnboarding) {
+    console.log("[TabsLayout] Redirecting to index:", { isAuthenticated, hasCompletedOnboarding });
     return <Redirect href="/" />;
   }
 

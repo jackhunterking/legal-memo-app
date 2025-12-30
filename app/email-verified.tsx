@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CheckCircle, ArrowRight } from "lucide-react-native";
 import { successNotification, mediumImpact, errorNotification } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
 
 export default function EmailVerifiedScreen() {
@@ -70,46 +71,85 @@ export default function EmailVerifiedScreen() {
       return;
     }
 
-    // If user has completed onboarding, go to home
+    // If user has completed onboarding, route through index for proper routing
     if (hasCompletedOnboarding) {
-      console.log("[EmailVerified] Onboarding already completed, navigating to home");
-      router.replace("/(tabs)/home");
+      console.log("[EmailVerified] Onboarding already completed, routing through index...");
+      router.replace("/");
       return;
     }
 
-    // If no user, something is wrong - redirect to auth
+    // If no user in context, something is wrong - redirect to auth
     if (!user?.id) {
       console.error("[EmailVerified] No user found after email verification");
       if (Platform.OS !== "web") {
         errorNotification();
       }
       Alert.alert(
-        "Session Error",
-        "Unable to verify your session. Please sign in again.",
+        "Session Expired",
+        "Your verification link may have expired. Please sign in or sign up again.",
         [{ text: "OK", onPress: () => router.replace("/auth") }]
       );
       return;
     }
 
-    // Create/update profile for the user (this marks onboarding as complete)
     setIsProcessing(true);
     setError(null);
     
     try {
       console.log("[EmailVerified] Completing onboarding for user:", user.id);
       
-      // Small delay to ensure auth state is fully propagated
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // First, verify the session is valid by checking if user exists in auth
+      const { data: authUser, error: authError } = await supabase.auth.getUser();
       
-      await createProfile({
-        userId: user.id,
-        userEmail: user.email,
-      });
+      if (authError || !authUser.user) {
+        console.error("[EmailVerified] Session invalid or user doesn't exist:", authError);
+        if (Platform.OS !== "web") {
+          errorNotification();
+        }
+        await supabase.auth.signOut();
+        Alert.alert(
+          "Session Expired",
+          "Your session has expired. Please sign in again.",
+          [{ text: "OK", onPress: () => router.replace("/auth") }]
+        );
+        return;
+      }
       
-      console.log("[EmailVerified] Profile created/updated successfully");
-      router.replace("/(tabs)/home");
+      // Check if profile already exists
+      const { data: existingProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, onboarding_completed')
+        .eq('id', user.id)
+        .single();
+      
+      if (profileError && profileError.code !== 'PGRST116') {
+        console.log("[EmailVerified] Profile fetch error:", profileError.message);
+      }
+      
+      if (existingProfile) {
+        // Profile exists - just update onboarding status
+        console.log("[EmailVerified] Profile exists, updating onboarding status");
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ onboarding_completed: true })
+          .eq('id', user.id);
+        
+        if (updateError) {
+          throw updateError;
+        }
+      } else {
+        // Profile doesn't exist - trigger should have created it, but try createProfile as fallback
+        console.log("[EmailVerified] Profile doesn't exist, using createProfile...");
+        await createProfile({
+          userId: user.id,
+          userEmail: user.email,
+        });
+      }
+      
+      console.log("[EmailVerified] Profile setup complete, routing through index...");
+      router.replace("/");
     } catch (err) {
-      console.error("[EmailVerified] Error creating profile:", err);
+      console.error("[EmailVerified] Error:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to complete setup";
       setError(errorMessage);
       
@@ -117,12 +157,19 @@ export default function EmailVerifiedScreen() {
         errorNotification();
       }
       
-      // If the error indicates the user doesn't exist, redirect to auth
-      if (errorMessage.includes("sign out") || errorMessage.includes("sign up")) {
+      // If the error indicates a fundamental auth issue, sign out and redirect
+      if (errorMessage.includes("sign out") || errorMessage.includes("sign up") || 
+          errorMessage.includes("23503") || errorMessage.includes("foreign key")) {
         Alert.alert(
           "Account Setup Issue",
-          errorMessage,
-          [{ text: "OK", onPress: () => router.replace("/auth") }]
+          "There was an issue setting up your account. Please try signing up again.",
+          [{ 
+            text: "OK", 
+            onPress: async () => {
+              await supabase.auth.signOut();
+              router.replace("/auth");
+            }
+          }]
         );
       } else {
         // For other errors, show message but allow retry

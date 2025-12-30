@@ -98,6 +98,152 @@ export const INACTIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   'expired',
 ] as const;
 
+// =============================================================================
+// Cancellation Status Helpers
+// =============================================================================
+
+/**
+ * Check if subscription is canceled (regardless of whether access remains).
+ */
+export function isCanceled(status: SubscriptionStatus | null | undefined): boolean {
+  return status === 'canceled';
+}
+
+/**
+ * Check if subscription is canceled but user still has access until period end.
+ * This is the "grace period" where user can still use the app.
+ * @param subscription - The subscription object
+ * @returns true if canceled but period hasn't ended yet
+ */
+export function isCanceledButStillActive(subscription: Subscription | null | undefined): boolean {
+  if (!subscription) return false;
+  if (subscription.status !== 'canceled') return false;
+  if (!subscription.current_period_end) return false;
+  
+  const periodEnd = new Date(subscription.current_period_end);
+  return periodEnd > new Date();
+}
+
+/**
+ * Get the date when access ends for a subscription.
+ * For active subscriptions, this is the renewal date.
+ * For canceled subscriptions, this is when access will be revoked.
+ */
+export function getAccessEndDate(subscription: Subscription | null | undefined): Date | null {
+  if (!subscription?.current_period_end) return null;
+  return new Date(subscription.current_period_end);
+}
+
+/**
+ * Get days until access ends.
+ * Returns 0 if subscription is null, expired, or no period end date.
+ */
+export function getDaysUntilAccessEnds(subscription: Subscription | null | undefined): number {
+  const endDate = getAccessEndDate(subscription);
+  if (!endDate) return 0;
+  
+  const now = new Date();
+  const diffMs = endDate.getTime() - now.getTime();
+  return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+/**
+ * Information about cancellation status for display.
+ */
+export interface CancellationDisplayInfo {
+  isCanceled: boolean;
+  hasAccess: boolean;
+  accessEndsAt: Date | null;
+  daysRemaining: number;
+  reason: CancellationReason | null;
+  displayMessage: string;
+  urgencyLevel: 'none' | 'info' | 'warning' | 'danger';
+}
+
+/**
+ * Get comprehensive cancellation display information.
+ * Use this for rendering cancellation status in the UI.
+ */
+export function getCancellationDisplayInfo(subscription: Subscription | null | undefined): CancellationDisplayInfo {
+  const canceled = isCanceled(subscription?.status);
+  const stillActive = isCanceledButStillActive(subscription);
+  const accessEndsAt = getAccessEndDate(subscription);
+  const daysRemaining = getDaysUntilAccessEnds(subscription);
+  const reason = subscription?.cancellation_reason || null;
+
+  // Not canceled
+  if (!canceled) {
+    return {
+      isCanceled: false,
+      hasAccess: isSubscriptionActive(subscription?.status),
+      accessEndsAt,
+      daysRemaining,
+      reason: null,
+      displayMessage: '',
+      urgencyLevel: 'none',
+    };
+  }
+
+  // Canceled but still has access
+  if (stillActive) {
+    let urgency: 'info' | 'warning' | 'danger' = 'info';
+    let message = '';
+    
+    if (daysRemaining <= 1) {
+      urgency = 'danger';
+      message = daysRemaining === 0 
+        ? 'Your access ends today' 
+        : 'Your access ends tomorrow';
+    } else if (daysRemaining <= 3) {
+      urgency = 'warning';
+      message = `Your access ends in ${daysRemaining} days`;
+    } else {
+      message = accessEndsAt 
+        ? `Access until ${accessEndsAt.toLocaleDateString()}`
+        : `Access ends in ${daysRemaining} days`;
+    }
+
+    return {
+      isCanceled: true,
+      hasAccess: true,
+      accessEndsAt,
+      daysRemaining,
+      reason,
+      displayMessage: message,
+      urgencyLevel: urgency,
+    };
+  }
+
+  // Canceled and access has ended
+  return {
+    isCanceled: true,
+    hasAccess: false,
+    accessEndsAt,
+    daysRemaining: 0,
+    reason,
+    displayMessage: 'Your subscription has ended',
+    urgencyLevel: 'danger',
+  };
+}
+
+/**
+ * Get user-friendly message for cancellation reason.
+ */
+export function getCancellationReasonMessage(reason: CancellationReason | null | undefined): string {
+  switch (reason) {
+    case 'user_requested':
+      return 'You canceled your subscription';
+    case 'payment_failed':
+      return 'Payment could not be processed';
+    case 'trial_ended':
+      return 'Free trial period ended';
+    case 'admin_revoked':
+      return 'Subscription was revoked';
+    default:
+      return 'Subscription canceled';
+  }
+}
+
 /** Payment store type (Polar only) */
 export type PaymentStore = 'polar';
 
@@ -115,6 +261,7 @@ export interface Subscription {
   current_period_start: string | null;
   current_period_end: string | null;
   canceled_at: string | null;
+  cancellation_reason: CancellationReason | null;
   store: PaymentStore | null;
   environment: string | null;
   created_at: string;
@@ -159,7 +306,15 @@ export interface CanRecordResult {
   trial_days_remaining: number;
   has_subscription: boolean;
   subscription_status: SubscriptionStatus | null;
-  reason: 'active_subscription' | 'active_trial' | 'trial_expired';
+  // Cancellation status fields
+  is_canceling: boolean;
+  canceled_but_active: boolean;
+  canceled_at: string | null;
+  cancellation_reason: CancellationReason | null;
+  access_ends_at: string | null;
+  days_until_access_ends: number;
+  current_period_end: string | null;
+  reason: 'active_subscription' | 'canceled_but_active' | 'active_trial' | 'trial_expired';
 }
 
 /** Result from can_access_features database function */
@@ -171,7 +326,15 @@ export interface CanAccessResult {
   trial_days_remaining: number;
   has_subscription: boolean;
   subscription_status: SubscriptionStatus | null;
-  reason: 'active_subscription' | 'active_trial' | 'trial_expired';
+  // Cancellation status fields
+  is_canceling: boolean;
+  canceled_but_active: boolean;
+  canceled_at: string | null;
+  cancellation_reason: CancellationReason | null;
+  access_ends_at: string | null;
+  days_until_access_ends: number;
+  current_period_end: string | null;
+  reason: 'active_subscription' | 'canceled_but_active' | 'active_trial' | 'trial_expired';
 }
 
 /** User's current usage state */
@@ -187,6 +350,14 @@ export interface UsageState {
   trialDaysRemaining: number;
   isTrialExpired: boolean;
   
+  // Cancellation status
+  isCanceling: boolean;
+  canceledButStillActive: boolean;
+  canceledAt: Date | null;
+  cancellationReason: CancellationReason | null;
+  accessEndsAt: Date | null;
+  daysUntilAccessEnds: number;
+  
   // Lifetime stats
   lifetimeMinutesUsed: number;
   
@@ -198,7 +369,7 @@ export interface UsageState {
   // Access checks
   canRecord: boolean;
   canAccessFeatures: boolean;
-  accessReason: 'active_subscription' | 'active_trial' | 'trial_expired';
+  accessReason: 'active_subscription' | 'canceled_but_active' | 'active_trial' | 'trial_expired';
 }
 
 /** Subscription plan constants */

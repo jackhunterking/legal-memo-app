@@ -212,6 +212,7 @@ async function handleSubscriptionActive(data: any, environment: string) {
     .eq("polar_subscription_id", data.id)
     .single();
 
+  // Clear any cancellation fields when subscription becomes active
   const { error } = await supabase
     .from("subscriptions")
     .update({
@@ -219,6 +220,7 @@ async function handleSubscriptionActive(data: any, environment: string) {
       current_period_start: data.current_period_start,
       current_period_end: data.current_period_end,
       canceled_at: null,
+      cancellation_reason: null, // Clear cancellation reason on reactivation
       environment: environment, // Update environment in case it changed
       updated_at: new Date().toISOString(),
     })
@@ -270,35 +272,64 @@ async function handleSubscriptionUpdated(data: any, environment: string) {
 async function handleSubscriptionCanceled(data: any, environment: string) {
   console.log("[polar-webhook] Subscription canceled:", data.id);
   console.log("[polar-webhook] Environment:", environment);
+  console.log("[polar-webhook] Current period end:", data.current_period_end);
+  console.log("[polar-webhook] Canceled at:", data.canceled_at);
+  console.log("[polar-webhook] Cancel reason:", data.cancel_reason || data.cancellation_reason);
   
   const supabase = getSupabaseAdmin();
 
+  // Determine cancellation reason from Polar payload
+  // Polar may send this in different fields depending on the cancellation type
+  const cancellationReason = data.cancel_reason || 
+                             data.cancellation_reason || 
+                             data.reason ||
+                             'user_requested'; // Default to user-initiated
+
+  // IMPORTANT: Preserve current_period_end - this tells us when access should end
+  // Users who cancel should retain access until their paid period ends
+  const updateData: Record<string, any> = {
+    status: "canceled",
+    canceled_at: data.canceled_at || new Date().toISOString(),
+    cancellation_reason: cancellationReason,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Only update current_period_end if Polar provides it (don't null it out)
+  if (data.current_period_end) {
+    updateData.current_period_end = data.current_period_end;
+  }
+
   const { error } = await supabase
     .from("subscriptions")
-    .update({
-      status: "canceled",
-      canceled_at: data.canceled_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq("polar_subscription_id", data.id);
 
   if (error) {
     console.error("[polar-webhook] Error canceling subscription:", error);
   }
 
-  console.log("[polar-webhook] Subscription canceled:", data.id);
+  console.log("[polar-webhook] Subscription canceled:", data.id, "reason:", cancellationReason);
 }
 
 async function handleSubscriptionRevoked(data: any, environment: string) {
   console.log("[polar-webhook] Subscription revoked:", data.id);
   console.log("[polar-webhook] Environment:", environment);
+  console.log("[polar-webhook] Revocation reason:", data.revoke_reason || data.reason);
   
   const supabase = getSupabaseAdmin();
+
+  // Revoked means immediate access loss - determine reason
+  const cancellationReason = data.revoke_reason || 
+                             data.reason || 
+                             data.cancellation_reason ||
+                             'admin_revoked'; // Default for revocations
 
   const { error } = await supabase
     .from("subscriptions")
     .update({
       status: "expired",
+      canceled_at: data.canceled_at || new Date().toISOString(),
+      cancellation_reason: cancellationReason,
       updated_at: new Date().toISOString(),
     })
     .eq("polar_subscription_id", data.id);
@@ -307,7 +338,7 @@ async function handleSubscriptionRevoked(data: any, environment: string) {
     console.error("[polar-webhook] Error revoking subscription:", error);
   }
 
-  console.log("[polar-webhook] Subscription revoked:", data.id);
+  console.log("[polar-webhook] Subscription revoked:", data.id, "reason:", cancellationReason);
 }
 
 async function handleSubscriptionUncanceled(data: any, environment: string) {
@@ -316,13 +347,25 @@ async function handleSubscriptionUncanceled(data: any, environment: string) {
   
   const supabase = getSupabaseAdmin();
 
+  // Clear cancellation fields when subscription is reactivated
+  const updateData: Record<string, any> = {
+    status: "active",
+    canceled_at: null,
+    cancellation_reason: null, // Clear the reason when reactivated
+    updated_at: new Date().toISOString(),
+  };
+
+  // Update period dates if provided
+  if (data.current_period_start) {
+    updateData.current_period_start = data.current_period_start;
+  }
+  if (data.current_period_end) {
+    updateData.current_period_end = data.current_period_end;
+  }
+
   const { error } = await supabase
     .from("subscriptions")
-    .update({
-      status: "active",
-      canceled_at: null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq("polar_subscription_id", data.id);
 
   if (error) {

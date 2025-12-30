@@ -45,6 +45,8 @@ import {
   Users,
   Lock,
   CheckCircle,
+  AlertTriangle,
+  CalendarX,
 } from "lucide-react-native";
 import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useUsage } from "@/contexts/UsageContext";
@@ -112,6 +114,12 @@ export default function SubscriptionScreen() {
     hasActiveTrial,
     isTrialExpired,
     trialDaysRemaining,
+    // Cancellation status
+    isCanceling,
+    canceledButStillActive,
+    accessEndsAt,
+    daysUntilAccessEnds,
+    getCancellationInfo,
   } = useUsage();
   
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -555,46 +563,109 @@ export default function SubscriptionScreen() {
           {/* Subscriber View */}
           {hasProEntitlement ? (
             <View style={styles.subscriberContent}>
+              {/* Cancellation Warning Banner */}
+              {canceledButStillActive && (
+                <View style={styles.cancellationBanner}>
+                  <View style={styles.cancellationBannerHeader}>
+                    <AlertTriangle size={20} color="#F59E0B" />
+                    <Text style={styles.cancellationBannerTitle}>Subscription Canceled</Text>
+                  </View>
+                  <Text style={styles.cancellationBannerText}>
+                    {daysUntilAccessEnds <= 1 
+                      ? daysUntilAccessEnds === 0 
+                        ? "Your access ends today"
+                        : "Your access ends tomorrow"
+                      : `Access continues until ${accessEndsAt?.toLocaleDateString()}`
+                    }
+                  </Text>
+                  <Text style={styles.cancellationBannerSubtext}>
+                    {daysUntilAccessEnds} {daysUntilAccessEnds === 1 ? 'day' : 'days'} remaining
+                  </Text>
+                </View>
+              )}
+
               {/* Shield Icon */}
               <View style={styles.shieldContainer}>
                 <LinearGradient
-                  colors={[ACCENT_GREEN, ACCENT_GREEN_DARK]}
+                  colors={canceledButStillActive ? ["#F59E0B", "#D97706"] : [ACCENT_GREEN, ACCENT_GREEN_DARK]}
                   style={styles.shieldGradient}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
-                  <ShieldCheck size={40} color="#fff" />
+                  {canceledButStillActive ? (
+                    <CalendarX size={40} color="#fff" />
+                  ) : (
+                    <ShieldCheck size={40} color="#fff" />
+                  )}
                 </LinearGradient>
               </View>
 
               {/* Hero Text */}
-              <Text style={styles.heroTitle}>Unlimited Access Active</Text>
-              <Text style={styles.heroSubtitle}>Thank you for subscribing</Text>
+              <Text style={styles.heroTitle}>
+                {canceledButStillActive ? "Access Until Expiry" : "Unlimited Access Active"}
+              </Text>
+              <Text style={styles.heroSubtitle}>
+                {canceledButStillActive 
+                  ? "Your subscription won't renew" 
+                  : "Thank you for subscribing"
+                }
+              </Text>
 
               {/* Status Badge */}
-              <View style={styles.proBadge}>
-                <Crown size={16} color="#FFD700" />
-                <Text style={styles.proBadgeText}>PRO</Text>
+              <View style={[styles.proBadge, canceledButStillActive && styles.cancelingBadge]}>
+                {canceledButStillActive ? (
+                  <>
+                    <AlertTriangle size={16} color="#F59E0B" />
+                    <Text style={[styles.proBadgeText, styles.cancelingBadgeText]}>CANCELING</Text>
+                  </>
+                ) : (
+                  <>
+                    <Crown size={16} color="#FFD700" />
+                    <Text style={styles.proBadgeText}>PRO</Text>
+                  </>
+                )}
               </View>
 
               {/* Unlimited Card */}
-              <View style={styles.unlimitedCard}>
-                <View style={styles.unlimitedBadge}>
-                  <Text style={styles.unlimitedBadgeText}>Active Subscription</Text>
+              <View style={[styles.unlimitedCard, canceledButStillActive && styles.cancelingCard]}>
+                <View style={[styles.unlimitedBadge, canceledButStillActive && styles.cancelingCardBadge]}>
+                  <Text style={styles.unlimitedBadgeText}>
+                    {canceledButStillActive ? "Grace Period" : "Active Subscription"}
+                  </Text>
                 </View>
                 <View style={styles.unlimitedContent}>
                   <Text style={styles.unlimitedTitle}>UNLIMITED</Text>
                   <View style={styles.unlimitedSubtitleRow}>
-                    <Infinity size={18} color={ACCENT_GREEN} />
-                    <Text style={styles.unlimitedSubtitle}>RECORDING & TRANSCRIPTION</Text>
+                    <Infinity size={18} color={canceledButStillActive ? "#F59E0B" : ACCENT_GREEN} />
+                    <Text style={[styles.unlimitedSubtitle, canceledButStillActive && { color: "#F59E0B" }]}>
+                      RECORDING & TRANSCRIPTION
+                    </Text>
                   </View>
                   {expirationDate && (
-                    <Text style={styles.renewalText}>
-                      Renews {expirationDate.toLocaleDateString()}
+                    <Text style={[styles.renewalText, canceledButStillActive && styles.expiryText]}>
+                      {canceledButStillActive 
+                        ? `Expires ${expirationDate.toLocaleDateString()}`
+                        : `Renews ${expirationDate.toLocaleDateString()}`
+                      }
                     </Text>
                   )}
                 </View>
               </View>
+
+              {/* Resubscribe Button for canceled users */}
+              {canceledButStillActive && (
+                <Pressable
+                  style={styles.resubscribeButton}
+                  onPress={handleSubscribe}
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? (
+                    <ActivityIndicator size="small" color="#000" />
+                  ) : (
+                    <Text style={styles.resubscribeButtonText}>Resubscribe Now</Text>
+                  )}
+                </Pressable>
+              )}
 
               {/* Manage Button */}
               <Pressable
@@ -607,7 +678,9 @@ export default function SubscriptionScreen() {
                 ) : (
                   <>
                     <CreditCard size={20} color={Colors.text} />
-                    <Text style={styles.manageButtonText}>Manage Subscription</Text>
+                    <Text style={styles.manageButtonText}>
+                      {canceledButStillActive ? "Undo Cancellation" : "Manage Subscription"}
+                    </Text>
                     <ExternalLink size={16} color={Colors.textMuted} />
                   </>
                 )}
@@ -889,6 +962,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
     textAlign: "center",
+  },
+  // Cancellation Status Styles
+  cancellationBanner: {
+    width: "100%",
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.3)",
+    padding: 16,
+    marginBottom: 20,
+  },
+  cancellationBannerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  cancellationBannerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#F59E0B",
+  },
+  cancellationBannerText: {
+    fontSize: 14,
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  cancellationBannerSubtext: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  cancelingBadge: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
+  cancelingBadgeText: {
+    color: "#F59E0B",
+  },
+  cancelingCard: {
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderColor: "rgba(245, 158, 11, 0.3)",
+  },
+  cancelingCardBadge: {
+    backgroundColor: "#F59E0B",
+  },
+  expiryText: {
+    color: "#F59E0B",
+    fontWeight: "600",
+  },
+  resubscribeButton: {
+    width: "100%",
+    backgroundColor: ACCENT_GREEN,
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+  },
+  resubscribeButtonText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#000",
   },
   // Paywall (Non-Subscriber) View
   paywallContent: {

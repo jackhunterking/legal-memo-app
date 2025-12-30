@@ -10,7 +10,7 @@ const LOG_PREFIX = '[AuthContext]';
 export const [AuthProvider, useAuth] = createContextHook(() => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [functionsAuthReady, setFunctionsAuthReady] = useState(false);
   const queryClient = useQueryClient();
   const initStartedRef = useRef(false);
@@ -57,7 +57,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       });
       setSession(session);
       setUser(session?.user ?? null);
-      setIsLoading(false);
+      setIsAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -71,7 +71,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       console.log(`${LOG_PREFIX} Functions auth status after change:`, JSON.stringify(getFunctionsAuthStatus()));
       setSession(session);
       setUser(session?.user ?? null);
-      setIsLoading(false);
+      setIsAuthLoading(false);
     });
 
     return () => {
@@ -93,8 +93,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         .single();
       
       if (error) {
-        console.log('[AuthContext] Profile fetch error:', error.message);
-        if (error.code === 'PGRST116') {
+        console.log('[AuthContext] Profile fetch error:', error.message, 'Code:', error.code);
+        // Handle all "no rows" errors - profile doesn't exist
+        // PGRST116 = "The result contains 0 rows"
+        // Also handle other similar errors like "Cannot coerce the result"
+        if (error.code === 'PGRST116' || error.message.includes('coerce')) {
+          console.log('[AuthContext] Profile does not exist for user - possible stale session');
           return null;
         }
         throw error;
@@ -104,6 +108,9 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return data;
     },
     enabled: !!user?.id,
+    // Reduce retries for profile fetch - if it fails, it's likely a stale session
+    retry: 1,
+    retryDelay: 500,
   });
 
   const signUpMutation = useMutation({
@@ -228,11 +235,50 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     },
   });
 
+  // Profile loading: true when we have a user but profile query hasn't completed yet
+  const isProfileLoading = !!user?.id && profileQuery.isLoading;
+  
+  // Fully loaded: auth is done AND if authenticated, profile is also loaded
+  const isFullyLoaded = !isAuthLoading && (!user?.id || !profileQuery.isLoading);
+
+  // Detect stale session: user is authenticated but profile doesn't exist after fetch completed
+  const profileMissing = !!user?.id && !profileQuery.isLoading && !profileQuery.data;
+
+  // Auto-sign out stale sessions - verify the user actually exists in auth before signing out
+  useEffect(() => {
+    if (profileMissing) {
+      console.log(`${LOG_PREFIX} Profile missing for user ${user?.id}. Verifying session...`);
+      
+      // Check if the session is actually valid by calling getUser()
+      // This will fail if the user was deleted from auth.users
+      supabase.auth.getUser().then(({ data, error }) => {
+        if (error || !data.user) {
+          console.log(`${LOG_PREFIX} Session is stale (user doesn't exist in auth). Signing out...`);
+          supabase.auth.signOut().then(() => {
+            console.log(`${LOG_PREFIX} Signed out stale session`);
+            queryClient.clear();
+          }).catch((err) => {
+            console.error(`${LOG_PREFIX} Error signing out stale session:`, err);
+          });
+        } else {
+          // User exists but profile doesn't - this is a trigger failure case
+          // The email-verified screen will handle creating the profile
+          console.log(`${LOG_PREFIX} User exists in auth but profile missing - trigger may have failed`);
+        }
+      });
+    }
+  }, [profileMissing, user?.id, queryClient]);
+
   return {
     session,
     user,
     profile: profileQuery.data,
-    isLoading: isLoading || profileQuery.isLoading,
+    // Combined loading state (for backward compatibility)
+    isLoading: isAuthLoading || isProfileLoading,
+    // Granular loading states
+    isAuthLoading,
+    isProfileLoading,
+    isFullyLoaded,
     isAuthenticated: !!session,
     hasCompletedOnboarding: profileQuery.data?.onboarding_completed ?? false,
     

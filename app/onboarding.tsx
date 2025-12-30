@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,11 +7,13 @@ import {
   Dimensions,
   Animated,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ban, Clock, FileText } from "lucide-react-native";
-import { lightImpact, mediumImpact } from "@/lib/haptics";
+import { lightImpact } from "@/lib/haptics";
+import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
 
 Dimensions.get("window");
@@ -39,8 +41,40 @@ const STEPS = [
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const { isAuthenticated, isAuthLoading } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  // Auth guard: If user is already authenticated, redirect to index
+  // Index will handle auto-completing onboarding and routing to home
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated) {
+      console.log("[Onboarding] User is authenticated, redirecting to index for proper routing...");
+      router.replace("/");
+    }
+  }, [isAuthenticated, isAuthLoading, router]);
+
+  // Show loading while checking auth state
+  if (isAuthLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.accentLight} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // If authenticated, show nothing while redirect happens
+  if (isAuthenticated) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.accentLight} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const handleNext = () => {
     if (Platform.OS !== "web") {
@@ -115,6 +149,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   content: {
     flex: 1,

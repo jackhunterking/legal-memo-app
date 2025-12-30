@@ -414,6 +414,11 @@ export default function SettingsScreen() {
     isTrialExpired,
     trialDaysRemaining,
     isLoading: isUsageLoading,
+    // Cancellation status
+    isCanceling,
+    canceledButStillActive,
+    accessEndsAt,
+    daysUntilAccessEnds,
   } = useUsage();
 
   const [featureRequest, setFeatureRequest] = useState("");
@@ -911,27 +916,59 @@ export default function SettingsScreen() {
 
         <Text style={styles.sectionTitle}>Subscription & Usage</Text>
         <View style={styles.section}>
-          {/* Subscription Status Row - Different UI for subscribers vs non-subscribers */}
+          {/* Subscription Status Row - Different UI based on status */}
           {hasActiveSubscription ? (
-            // Active subscriber view - show PRO badge and status
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <View style={styles.proBadgeContainer}>
-                  <Crown size={16} color="#FFD700" />
-                </View>
-                <View style={styles.billingInfo}>
-                  <View style={styles.subscriptionTitleRow}>
-                    <Text style={styles.settingLabel}>Pro Subscription</Text>
-                    <View style={styles.proBadge}>
-                      <Text style={styles.proBadgeText}>PRO</Text>
-                    </View>
+            // Active subscriber view (including canceled-but-active)
+            canceledButStillActive ? (
+              // Canceling state - show warning
+              <Pressable
+                style={[styles.settingRow, styles.pressableRow]}
+                onPress={() => router.push("/subscription")}
+              >
+                <View style={styles.settingLeft}>
+                  <View style={styles.cancelingBadgeContainer}>
+                    <AlertTriangle size={16} color="#F59E0B" />
                   </View>
-                  <Text style={[styles.billingHint, { color: Colors.success }]}>
-                    Unlimited Access Active
-                  </Text>
+                  <View style={styles.billingInfo}>
+                    <View style={styles.subscriptionTitleRow}>
+                      <Text style={styles.settingLabel}>Subscription Canceling</Text>
+                      <View style={styles.cancelingBadge}>
+                        <Text style={styles.cancelingBadgeText}>ENDING</Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.billingHint, { color: "#F59E0B" }]}>
+                      {daysUntilAccessEnds <= 1 
+                        ? daysUntilAccessEnds === 0 
+                          ? "Ends today"
+                          : "Ends tomorrow"
+                        : `${daysUntilAccessEnds} days remaining`
+                      }
+                    </Text>
+                  </View>
+                </View>
+                <ChevronRight size={20} color={Colors.textMuted} />
+              </Pressable>
+            ) : (
+              // Active subscriber view - show PRO badge and status
+              <View style={styles.settingRow}>
+                <View style={styles.settingLeft}>
+                  <View style={styles.proBadgeContainer}>
+                    <Crown size={16} color="#FFD700" />
+                  </View>
+                  <View style={styles.billingInfo}>
+                    <View style={styles.subscriptionTitleRow}>
+                      <Text style={styles.settingLabel}>Pro Subscription</Text>
+                      <View style={styles.proBadge}>
+                        <Text style={styles.proBadgeText}>PRO</Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.billingHint, { color: Colors.success }]}>
+                      Unlimited Access Active
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
+            )
           ) : (
             // Non-subscriber view - show trial status or subscribe prompt
             <Pressable
@@ -973,7 +1010,7 @@ export default function SettingsScreen() {
             </Pressable>
           )}
 
-          {/* Manage Subscription Button - Only for active subscribers */}
+          {/* Manage Subscription Button - For active subscribers */}
           {hasActiveSubscription && (
             <Pressable
               style={[styles.settingRow, styles.pressableRow, styles.manageSubRow]}
@@ -981,18 +1018,23 @@ export default function SettingsScreen() {
               disabled={isManagingSubscription}
             >
               <View style={styles.settingLeft}>
-                <CreditCard size={20} color={Colors.accent} />
+                <CreditCard size={20} color={canceledButStillActive ? "#F59E0B" : Colors.accent} />
                 <View style={styles.billingInfo}>
-                  <Text style={styles.settingLabel}>Manage Subscription</Text>
+                  <Text style={styles.settingLabel}>
+                    {canceledButStillActive ? "Undo Cancellation" : "Manage Subscription"}
+                  </Text>
                   <Text style={styles.billingHint}>
-                    {subscription?.current_period_end 
-                      ? `Renews ${new Date(subscription.current_period_end).toLocaleDateString()}`
-                      : 'Billing, cancel, update payment'}
+                    {canceledButStillActive 
+                      ? `Access ends ${accessEndsAt?.toLocaleDateString() || 'soon'}`
+                      : subscription?.current_period_end 
+                        ? `Renews ${new Date(subscription.current_period_end).toLocaleDateString()}`
+                        : 'Billing, cancel, update payment'
+                    }
                   </Text>
                 </View>
               </View>
               {isManagingSubscription ? (
-                <ActivityIndicator size="small" color={Colors.accent} />
+                <ActivityIndicator size="small" color={canceledButStillActive ? "#F59E0B" : Colors.accent} />
               ) : (
                 <ExternalLink size={20} color={Colors.textMuted} />
               )}
@@ -1006,12 +1048,28 @@ export default function SettingsScreen() {
                 <Text style={styles.usageStatValue}>{usageState.lifetimeMinutesUsed}</Text>
                 <Text style={styles.usageStatLabel}>Total Min</Text>
               </View>
-              {hasActiveSubscription && (
+              {hasActiveSubscription && !canceledButStillActive && (
                 <>
                   <View style={styles.usageStatDivider} />
                   <View style={styles.usageStat}>
                     <Text style={[styles.usageStatValue, { color: Colors.success }]}>∞</Text>
                     <Text style={styles.usageStatLabel}>Unlimited</Text>
+                  </View>
+                </>
+              )}
+              {canceledButStillActive && (
+                <>
+                  <View style={styles.usageStatDivider} />
+                  <View style={styles.usageStat}>
+                    <Text style={[styles.usageStatValue, { color: "#F59E0B" }]}>
+                      {daysUntilAccessEnds}
+                    </Text>
+                    <Text style={styles.usageStatLabel}>Days Left</Text>
+                  </View>
+                  <View style={styles.usageStatDivider} />
+                  <View style={styles.usageStat}>
+                    <Text style={[styles.usageStatValue, { color: "#F59E0B" }]}>∞</Text>
+                    <Text style={styles.usageStatLabel}>Until Expiry</Text>
                   </View>
                 </>
               )}
@@ -1409,6 +1467,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  cancelingBadgeContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   subscriptionTitleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1424,6 +1490,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     color: "#FFD700",
+    letterSpacing: 0.5,
+  },
+  cancelingBadge: {
+    backgroundColor: "rgba(245, 158, 11, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  cancelingBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#F59E0B",
     letterSpacing: 0.5,
   },
   featureSection: {

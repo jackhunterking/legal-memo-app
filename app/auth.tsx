@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -22,7 +22,8 @@ import { isBiometricSupported, getBiometricType, isBiometricEnabled, authenticat
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { signIn, signUp, isSigningIn, isSigningUp } = useAuth();
+  const { signIn, signUp, isSigningIn, isSigningUp, isAuthenticated, isAuthLoading } = useAuth();
+  const redirectedRef = useRef(false);
   
   const [isLogin, setIsLogin] = useState(true);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
@@ -54,8 +55,8 @@ export default function AuthScreen() {
             password: credentials.encryptedPassword 
           });
           
-          // Go directly to home after biometric sign in
-          router.replace("/(tabs)/home");
+          // Route through index for proper routing (waits for profile)
+          router.replace("/");
         } else {
           Alert.alert(
             "Setup Required",
@@ -90,6 +91,39 @@ export default function AuthScreen() {
     
     checkBiometric();
   }, [isLogin, handleBiometricLogin]);
+
+  // Auth guard: If user is already authenticated, redirect to index
+  // This prevents the login loop where authenticated users land on auth screen
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated && !redirectedRef.current) {
+      console.log("[Auth] User is already authenticated, redirecting to index for proper routing...");
+      redirectedRef.current = true;
+      router.replace("/");
+    }
+  }, [isAuthenticated, isAuthLoading, router]);
+
+  // Show loading while checking auth state, but only briefly
+  // We don't want to block the auth screen entirely
+  if (isAuthLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.accentLight} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // If authenticated, show loading while redirect happens
+  if (isAuthenticated) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.accentLight} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const handleForgotPassword = async () => {
     if (!email.trim()) {
@@ -171,8 +205,8 @@ export default function AuthScreen() {
           });
         }
         
-        // Go directly to home after sign in
-        router.replace("/(tabs)/home");
+        // Route through index for proper routing (waits for profile to load)
+        router.replace("/");
       } else {
         await signUp({ email: email.trim(), password });
         router.replace({ pathname: "/email-confirmation", params: { email: email.trim() } });
@@ -390,6 +424,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   keyboardView: {
     flex: 1,

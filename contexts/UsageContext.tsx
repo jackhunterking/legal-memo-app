@@ -31,6 +31,8 @@ import type {
   UsageState, 
   CanRecordResult,
   CanAccessResult,
+  CancellationReason,
+  CancellationDisplayInfo,
 } from '@/types';
 import { 
   getDaysRemainingInPeriod,
@@ -40,6 +42,10 @@ import {
   formatTrialStatusMessage,
   SUBSCRIPTION_PLAN,
   isSubscriptionActive,
+  isCanceled,
+  isCanceledButStillActive,
+  getCancellationDisplayInfo,
+  getCancellationReasonMessage,
 } from '@/types';
 
 export const [UsageProvider, useUsage] = createContextHook(() => {
@@ -175,6 +181,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
           trial_days_remaining: daysRemaining,
           has_subscription: false,
           subscription_status: null,
+          // Cancellation fields (default to not canceled)
+          is_canceling: false,
+          canceled_but_active: false,
+          canceled_at: null,
+          cancellation_reason: null,
+          access_ends_at: null,
+          days_until_access_ends: 0,
+          current_period_end: null,
           reason: trialActive ? 'active_trial' : 'trial_expired',
         };
       }
@@ -218,6 +232,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
           trial_days_remaining: daysRemaining,
           has_subscription: false,
           subscription_status: null,
+          // Cancellation fields (default to not canceled)
+          is_canceling: false,
+          canceled_but_active: false,
+          canceled_at: null,
+          cancellation_reason: null,
+          access_ends_at: null,
+          days_until_access_ends: 0,
+          current_period_end: null,
           reason: trialActive ? 'active_trial' : 'trial_expired',
         };
       }
@@ -278,24 +300,49 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     
     const trialDaysRemaining = canRecordResult?.trial_days_remaining ?? getTrialDaysRemaining(trialStartedAt);
     const hasActiveTrial = canRecordResult?.has_active_trial ?? isTrialActive(trialStartedAt);
-    const isTrialExpired = !hasActiveTrial && !hasActiveSubscription;
+    
+    // Cancellation status - from database function or derived from subscription
+    const isCancelingFromDb = canRecordResult?.is_canceling ?? false;
+    const canceledButActiveFromDb = canRecordResult?.canceled_but_active ?? false;
+    
+    // Use database result, fall back to helper function if not available
+    const isCancelingState = isCancelingFromDb || isCanceled(subscription?.status);
+    const canceledButActiveState = canceledButActiveFromDb || isCanceledButStillActive(subscription);
+    
+    // Cancellation dates
+    const canceledAt = canRecordResult?.canceled_at 
+      ? new Date(canRecordResult.canceled_at) 
+      : (subscription?.canceled_at ? new Date(subscription.canceled_at) : null);
+    
+    const cancellationReason = (canRecordResult?.cancellation_reason || subscription?.cancellation_reason) as CancellationReason | null;
+    
+    const accessEndsAt = canRecordResult?.access_ends_at 
+      ? new Date(canRecordResult.access_ends_at) 
+      : (subscription?.current_period_end ? new Date(subscription.current_period_end) : null);
+    
+    const daysUntilAccessEnds = canRecordResult?.days_until_access_ends ?? 0;
+    
+    // Consider canceled-but-active users as still having subscription access
+    const effectiveHasSubscription = hasActiveSubscription || canceledButActiveState;
+    const isTrialExpired = !hasActiveTrial && !effectiveHasSubscription;
     
     // Subscription period dates (for subscribers)
     const periodStart = usageCredits?.period_start ? new Date(usageCredits.period_start) : null;
     const periodEnd = subscription?.current_period_end ? new Date(subscription.current_period_end) : null;
     const daysRemainingInPeriod = getDaysRemainingInPeriod(periodEnd);
     
-    // Access checks
-    const canRecord = canRecordResult?.can_record ?? (hasActiveTrial || hasActiveSubscription);
-    const canAccessFeatures = canAccessResult?.can_access ?? (hasActiveTrial || hasActiveSubscription);
+    // Access checks - include canceled-but-active users
+    const canRecord = canRecordResult?.can_record ?? (hasActiveTrial || effectiveHasSubscription);
+    const canAccessFeatures = canAccessResult?.can_access ?? (hasActiveTrial || effectiveHasSubscription);
     const accessReason = canRecordResult?.reason ?? (
       hasActiveSubscription ? 'active_subscription' : 
+      canceledButActiveState ? 'canceled_but_active' :
       hasActiveTrial ? 'active_trial' : 
       'trial_expired'
     );
     
     return {
-      hasActiveSubscription,
+      hasActiveSubscription: effectiveHasSubscription,
       subscription,
       
       // Time-based trial info
@@ -304,6 +351,14 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
       trialExpiresAt,
       trialDaysRemaining,
       isTrialExpired,
+      
+      // Cancellation status
+      isCanceling: isCancelingState,
+      canceledButStillActive: canceledButActiveState,
+      canceledAt,
+      cancellationReason,
+      accessEndsAt,
+      daysUntilAccessEnds,
       
       // Lifetime stats
       lifetimeMinutesUsed: usageCredits?.lifetime_minutes_used ?? 0,
@@ -364,15 +419,38 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
   
   /**
    * Check if user needs to see paywall (trial expired, no subscription)
-   * IMPORTANT: Never show paywall if user has an active subscription
+   * IMPORTANT: Never show paywall if user has an active subscription or is in grace period
    */
   const shouldShowPaywall = (): boolean => {
     // Active subscribers should NEVER see paywalls
     if (usageState.hasActiveSubscription) return false;
     // Users with active trial should not see paywalls
     if (usageState.hasActiveTrial) return false;
-    // Only show paywall if trial expired and no subscription
+    // Canceled but still active users should NOT see paywalls (grace period)
+    if (usageState.canceledButStillActive) return false;
+    // Only show paywall if trial expired and no subscription/grace period
     return usageState.isTrialExpired;
+  };
+
+  /**
+   * Check if subscription is canceled (regardless of whether access remains)
+   */
+  const isSubscriptionCanceling = (): boolean => {
+    return usageState.isCanceling;
+  };
+
+  /**
+   * Check if user is in cancellation grace period (canceled but still has access)
+   */
+  const isInCancellationGracePeriod = (): boolean => {
+    return usageState.canceledButStillActive;
+  };
+
+  /**
+   * Get comprehensive cancellation display info for UI
+   */
+  const getCancellationInfo = (): CancellationDisplayInfo => {
+    return getCancellationDisplayInfo(subscriptionQuery.data);
   };
 
   /**
@@ -464,12 +542,23 @@ export const [UsageProvider, useUsage] = createContextHook(() => {
     trialDaysRemaining: usageState.trialDaysRemaining,
     trialExpiresAt: usageState.trialExpiresAt,
     
+    // Cancellation info
+    isCanceling: usageState.isCanceling,
+    canceledButStillActive: usageState.canceledButStillActive,
+    canceledAt: usageState.canceledAt,
+    cancellationReason: usageState.cancellationReason,
+    accessEndsAt: usageState.accessEndsAt,
+    daysUntilAccessEnds: usageState.daysUntilAccessEnds,
+    
     // Helper functions
     shouldShowPaywall,
     isTrialEndingSoon,
     canAccessMeetingDetails,
     canStartRecording,
     getStatusMessage,
+    isSubscriptionCanceling,
+    isInCancellationGracePeriod,
+    getCancellationInfo,
     
     // Deprecated but kept for backward compatibility
     isInFreeTrial: usageState.hasActiveTrial, // Alias for hasActiveTrial
