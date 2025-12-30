@@ -1,9 +1,22 @@
-import { Tabs } from "expo-router";
+import { Tabs, Redirect } from "expo-router";
 import { Mic, FolderOpen, Settings, Users } from "lucide-react-native";
 import { Platform } from "react-native";
+import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
 
 export default function TabsLayout() {
+  const { isAuthenticated, hasCompletedOnboarding, isLoading } = useAuth();
+
+  // Show nothing while loading auth state to prevent flash
+  if (isLoading) {
+    return null;
+  }
+
+  // Redirect to index for proper routing if not authenticated or no profile
+  if (!isAuthenticated || !hasCompletedOnboarding) {
+    return <Redirect href="/" />;
+  }
+
   return (
     <Tabs
       screenOptions={{

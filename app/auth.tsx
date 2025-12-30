@@ -14,8 +14,9 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, Lock, Eye, EyeOff, Fingerprint, Gift } from "lucide-react-native";
 import { SUBSCRIPTION_PLAN } from "@/types";
-import { lightImpact, mediumImpact } from "@/lib/haptics";
+import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import Colors from "@/constants/colors";
 import { isBiometricSupported, getBiometricType, isBiometricEnabled, authenticateWithBiometrics, getBiometricCredentials, saveBiometricCredentials } from "@/lib/biometrics";
 
@@ -24,16 +25,18 @@ export default function AuthScreen() {
   const { signIn, signUp, isSigningIn, isSigningUp } = useAuth();
   
   const [isLogin, setIsLogin] = useState(true);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricType, setBiometricType] = useState<string | null>(null);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
 
-  const isLoading = isSigningIn || isSigningUp;
+  const isLoading = isSigningIn || isSigningUp || isResettingPassword;
 
   const handleBiometricLogin = useCallback(async () => {
     try {
@@ -88,7 +91,61 @@ export default function AuthScreen() {
     checkBiometric();
   }, [isLogin, handleBiometricLogin]);
 
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setError("Please enter your email address");
+      return;
+    }
+
+    setError("");
+    setIsResettingPassword(true);
+    mediumImpact();
+
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        email.trim(),
+        {
+          redirectTo: "legalmemo://reset-password",
+        }
+      );
+
+      if (resetError) {
+        throw resetError;
+      }
+
+      if (Platform.OS !== "web") {
+        successNotification();
+      }
+
+      Alert.alert(
+        "Check Your Email",
+        "If an account exists with this email, you'll receive a password reset link shortly.",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setIsForgotPassword(false);
+              setEmail("");
+            },
+          },
+        ]
+      );
+    } catch (err: unknown) {
+      console.error("[Auth] Password reset error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to send reset email";
+      setError(errorMessage);
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
   const handleSubmit = async () => {
+    // Handle forgot password flow
+    if (isForgotPassword) {
+      await handleForgotPassword();
+      return;
+    }
+
     if (!email.trim() || !password.trim()) {
       setError("Please enter email and password");
       return;
@@ -122,7 +179,40 @@ export default function AuthScreen() {
       }
     } catch (err: unknown) {
       console.error("[Auth] Error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Authentication failed";
+      const rawMessage = err instanceof Error ? err.message : "Authentication failed";
+      
+      // Parse Supabase error messages for better UX
+      let errorMessage = rawMessage;
+      
+      // Handle signup with existing email
+      if (!isLogin && (
+        rawMessage.toLowerCase().includes("already registered") ||
+        rawMessage.toLowerCase().includes("user already exists") ||
+        rawMessage.toLowerCase().includes("email already")
+      )) {
+        errorMessage = "An account with this email already exists. Please sign in instead.";
+        Alert.alert(
+          "Account Exists",
+          "An account with this email already exists. Would you like to sign in instead?",
+          [
+            { text: "Cancel", style: "cancel" },
+            { 
+              text: "Sign In", 
+              onPress: () => {
+                setIsLogin(true);
+                setError("");
+              }
+            },
+          ]
+        );
+        return;
+      }
+      
+      // Handle invalid credentials
+      if (isLogin && rawMessage.toLowerCase().includes("invalid")) {
+        errorMessage = "Invalid email or password. Please try again.";
+      }
+      
       setError(errorMessage);
       
       if (Platform.OS !== "web") {
@@ -136,6 +226,15 @@ export default function AuthScreen() {
       lightImpact();
     }
     setIsLogin(!isLogin);
+    setIsForgotPassword(false);
+    setError("");
+  };
+
+  const toggleForgotPassword = () => {
+    if (Platform.OS !== "web") {
+      lightImpact();
+    }
+    setIsForgotPassword(!isForgotPassword);
     setError("");
   };
 
@@ -148,12 +247,18 @@ export default function AuthScreen() {
         <View style={styles.content}>
           <View style={styles.header}>
             <Text style={styles.title}>
-              {isLogin ? "Welcome Back" : "Create Account"}
+              {isForgotPassword 
+                ? "Reset Password" 
+                : isLogin 
+                  ? "Welcome Back" 
+                  : "Create Account"}
             </Text>
             <Text style={styles.subtitle}>
-              {isLogin
-                ? "Sign in to continue"
-                : "Start your legal meeting assistant"}
+              {isForgotPassword
+                ? "Enter your email to receive a reset link"
+                : isLogin
+                  ? "Sign in to continue"
+                  : "Start your legal meeting assistant"}
             </Text>
           </View>
 
@@ -173,29 +278,39 @@ export default function AuthScreen() {
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Lock size={20} color={Colors.textMuted} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Password"
-                placeholderTextColor={Colors.textMuted}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                editable={!isLoading}
-              />
-              <Pressable
-                onPress={() => setShowPassword(!showPassword)}
-                style={styles.eyeButton}
-              >
-                {showPassword ? (
-                  <EyeOff size={20} color={Colors.textMuted} />
-                ) : (
-                  <Eye size={20} color={Colors.textMuted} />
-                )}
+            {/* Only show password field if not in forgot password mode */}
+            {!isForgotPassword && (
+              <View style={styles.inputContainer}>
+                <Lock size={20} color={Colors.textMuted} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor={Colors.textMuted}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  editable={!isLoading}
+                />
+                <Pressable
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeButton}
+                >
+                  {showPassword ? (
+                    <EyeOff size={20} color={Colors.textMuted} />
+                  ) : (
+                    <Eye size={20} color={Colors.textMuted} />
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {/* Forgot Password Link - only show on login screen */}
+            {isLogin && !isForgotPassword && (
+              <Pressable onPress={toggleForgotPassword} disabled={isLoading}>
+                <Text style={styles.forgotPasswordLink}>Forgot password?</Text>
               </Pressable>
-            </View>
+            )}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -208,13 +323,28 @@ export default function AuthScreen() {
                 <ActivityIndicator color={Colors.text} />
               ) : (
                 <Text style={styles.buttonText}>
-                  {isLogin ? "Sign In" : "Create Account"}
+                  {isForgotPassword 
+                    ? "Send Reset Link" 
+                    : isLogin 
+                      ? "Sign In" 
+                      : "Create Account"}
                 </Text>
               )}
             </Pressable>
 
+            {/* Back to Sign In - only show in forgot password mode */}
+            {isForgotPassword && (
+              <Pressable 
+                style={styles.backToSignInButton}
+                onPress={toggleForgotPassword} 
+                disabled={isLoading}
+              >
+                <Text style={styles.backToSignInText}>Back to Sign In</Text>
+              </Pressable>
+            )}
+
             {/* Free Trial Banner - only show for signup */}
-            {!isLogin && (
+            {!isLogin && !isForgotPassword && (
               <View style={styles.trialBanner}>
                 <Gift size={18} color={Colors.accent} />
                 <Text style={styles.trialBannerText}>
@@ -223,7 +353,7 @@ export default function AuthScreen() {
               </View>
             )}
 
-            {isLogin && biometricAvailable && biometricEnabled && (
+            {isLogin && !isForgotPassword && biometricAvailable && biometricEnabled && (
               <Pressable
                 style={[styles.biometricButton, isLoading && styles.buttonDisabled]}
                 onPress={handleBiometricLogin}
@@ -237,16 +367,19 @@ export default function AuthScreen() {
             )}
           </View>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>
-              {isLogin ? "Don't have an account?" : "Already have an account?"}
-            </Text>
-            <Pressable onPress={toggleMode} disabled={isLoading}>
-              <Text style={styles.footerLink}>
-                {isLogin ? "Sign Up" : "Sign In"}
+          {/* Footer - hide in forgot password mode */}
+          {!isForgotPassword && (
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>
+                {isLogin ? "Don't have an account?" : "Already have an account?"}
               </Text>
-            </Pressable>
-          </View>
+              <Pressable onPress={toggleMode} disabled={isLoading}>
+                <Text style={styles.footerLink}>
+                  {isLogin ? "Sign Up" : "Sign In"}
+                </Text>
+              </Pressable>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -308,12 +441,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
+  forgotPasswordLink: {
+    color: Colors.accentLight,
+    fontSize: 14,
+    textAlign: "right",
+    marginTop: -8,
+  },
   button: {
     backgroundColor: Colors.accentLight,
     paddingVertical: 18,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 8,
+  },
+  backToSignInButton: {
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  backToSignInText: {
+    color: Colors.textSecondary,
+    fontSize: 15,
+    fontWeight: "500" as const,
   },
   buttonDisabled: {
     opacity: 0.6,

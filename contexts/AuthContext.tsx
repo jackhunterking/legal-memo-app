@@ -145,11 +145,43 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       const userEmail = profileData.userEmail || user?.email;
       
       if (!userId) throw new Error('No user');
-      console.log('[AuthContext] Creating profile for user:', userId);
+      console.log('[AuthContext] Creating/updating profile for user:', userId);
       
+      // First check if profile already exists (should exist from database trigger)
+      const { data: existingProfile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('id, onboarding_completed, trial_started_at, display_name')
+        .eq('id', userId)
+        .single();
+      
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        // PGRST116 = no rows found, which is expected if profile doesn't exist
+        console.error('[AuthContext] Error checking existing profile:', fetchError);
+      }
+      
+      if (existingProfile) {
+        // Profile exists (created by trigger) - just update onboarding status
+        console.log('[AuthContext] Profile exists, updating onboarding_completed to true');
+        const { data, error } = await supabase
+          .from('profiles')
+          .update({
+            onboarding_completed: true,
+            display_name: profileData.display_name ?? existingProfile.display_name,
+          })
+          .eq('id', userId)
+          .select()
+          .single();
+        
+        if (error) throw error;
+        return data;
+      }
+      
+      // Profile doesn't exist (fallback - trigger should have created it)
+      // This can happen in edge cases like DB issues or timing problems
+      console.log('[AuthContext] Profile does not exist, creating new profile');
       const { data, error } = await supabase
         .from('profiles')
-        .upsert({
+        .insert({
           id: userId,
           email: userEmail,
           display_name: profileData.display_name ?? null,
@@ -160,7 +192,15 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         .select()
         .single();
       
-      if (error) throw error;
+      if (error) {
+        // If insert fails due to FK constraint, user may not exist in auth.users
+        // This is a critical error that needs user intervention
+        console.error('[AuthContext] Error creating profile:', error);
+        if (error.code === '23503') {
+          throw new Error('Account setup incomplete. Please sign out and try signing up again.');
+        }
+        throw error;
+      }
       return data;
     },
     onSuccess: () => {

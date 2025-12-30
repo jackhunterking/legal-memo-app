@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,17 +6,22 @@ import {
   Pressable,
   Animated,
   Platform,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CheckCircle, ArrowRight } from "lucide-react-native";
-import { successNotification, mediumImpact } from "@/lib/haptics";
+import { successNotification, mediumImpact, errorNotification } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
 import Colors from "@/constants/colors";
 
 export default function EmailVerifiedScreen() {
   const router = useRouter();
-  const { hasCompletedOnboarding, createProfile, user } = useAuth();
+  const { hasCompletedOnboarding, createProfile, user, isLoading: authLoading } = useAuth();
+  
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -59,25 +64,76 @@ export default function EmailVerifiedScreen() {
       mediumImpact();
     }
 
+    // Wait for auth to finish loading
+    if (authLoading) {
+      console.log("[EmailVerified] Auth still loading, waiting...");
+      return;
+    }
+
     // If user has completed onboarding, go to home
     if (hasCompletedOnboarding) {
+      console.log("[EmailVerified] Onboarding already completed, navigating to home");
       router.replace("/(tabs)/home");
-    } else {
-      // Create profile for the user (this marks onboarding as complete)
-      // Then go to home
-      try {
-        if (user?.id) {
-          await createProfile({
-            userId: user.id,
-            userEmail: user.email,
-          });
-        }
-        router.replace("/(tabs)/home");
-      } catch (error) {
-        console.error("[EmailVerified] Error creating profile:", error);
-        // Still navigate to home, profile will be created on next interaction
-        router.replace("/(tabs)/home");
+      return;
+    }
+
+    // If no user, something is wrong - redirect to auth
+    if (!user?.id) {
+      console.error("[EmailVerified] No user found after email verification");
+      if (Platform.OS !== "web") {
+        errorNotification();
       }
+      Alert.alert(
+        "Session Error",
+        "Unable to verify your session. Please sign in again.",
+        [{ text: "OK", onPress: () => router.replace("/auth") }]
+      );
+      return;
+    }
+
+    // Create/update profile for the user (this marks onboarding as complete)
+    setIsProcessing(true);
+    setError(null);
+    
+    try {
+      console.log("[EmailVerified] Completing onboarding for user:", user.id);
+      
+      // Small delay to ensure auth state is fully propagated
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      await createProfile({
+        userId: user.id,
+        userEmail: user.email,
+      });
+      
+      console.log("[EmailVerified] Profile created/updated successfully");
+      router.replace("/(tabs)/home");
+    } catch (err) {
+      console.error("[EmailVerified] Error creating profile:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to complete setup";
+      setError(errorMessage);
+      
+      if (Platform.OS !== "web") {
+        errorNotification();
+      }
+      
+      // If the error indicates the user doesn't exist, redirect to auth
+      if (errorMessage.includes("sign out") || errorMessage.includes("sign up")) {
+        Alert.alert(
+          "Account Setup Issue",
+          errorMessage,
+          [{ text: "OK", onPress: () => router.replace("/auth") }]
+        );
+      } else {
+        // For other errors, show message but allow retry
+        Alert.alert(
+          "Setup Error",
+          "Unable to complete account setup. Please try again.",
+          [{ text: "OK" }]
+        );
+      }
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -120,9 +176,22 @@ export default function EmailVerifiedScreen() {
         </Animated.View>
 
         <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <Pressable style={styles.button} onPress={handleContinue}>
-            <Text style={styles.buttonText}>Continue to App</Text>
-            <ArrowRight size={20} color={Colors.text} />
+          {error && (
+            <Text style={styles.errorText}>{error}</Text>
+          )}
+          <Pressable 
+            style={[styles.button, (isProcessing || authLoading) && styles.buttonDisabled]} 
+            onPress={handleContinue}
+            disabled={isProcessing || authLoading}
+          >
+            {isProcessing ? (
+              <ActivityIndicator color={Colors.text} />
+            ) : (
+              <>
+                <Text style={styles.buttonText}>Continue to App</Text>
+                <ArrowRight size={20} color={Colors.text} />
+              </>
+            )}
           </Pressable>
         </Animated.View>
       </View>
@@ -205,10 +274,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   buttonText: {
     fontSize: 18,
     fontWeight: "700" as const,
     color: Colors.text,
+  },
+  errorText: {
+    fontSize: 14,
+    color: Colors.error,
+    textAlign: "center",
+    marginBottom: 12,
   },
 });
 

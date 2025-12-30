@@ -43,8 +43,12 @@ export default function IndexScreen() {
     if (!isAuthenticated) {
       // Not logged in - show onboarding intro slides
       router.replace("/onboarding");
+    } else if (!hasCompletedOnboarding) {
+      // Logged in but hasn't completed onboarding - show onboarding
+      console.log("[Index] Onboarding not completed, redirecting to onboarding...");
+      router.replace("/onboarding");
     } else {
-      // Logged in - go directly to home
+      // Logged in and completed onboarding - go to home
       router.replace("/(tabs)/home");
     }
   }, [isAuthenticated, hasCompletedOnboarding, needsForceUpdate, isLoading, router, rootNavigationState?.key]);
