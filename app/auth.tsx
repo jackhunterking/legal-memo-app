@@ -13,6 +13,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, Lock, Eye, EyeOff, Fingerprint, Gift } from "lucide-react-native";
+import * as Linking from "expo-linking";
 import { SUBSCRIPTION_PLAN } from "@/types";
 import { lightImpact, mediumImpact, successNotification } from "@/lib/haptics";
 import { useAuth } from "@/contexts/AuthContext";
@@ -414,6 +415,17 @@ export default function AuthScreen() {
               </Pressable>
             </View>
           )}
+
+          {/* Legal Links - Always visible */}
+          <View style={styles.legalLinks}>
+            <Pressable onPress={() => Linking.openURL("https://legalmemo.app/terms")}>
+              <Text style={styles.legalLinkText}>Terms of Service</Text>
+            </Pressable>
+            <Text style={styles.legalDivider}>•</Text>
+            <Pressable onPress={() => Linking.openURL("https://legalmemo.app/privacy")}>
+              <Text style={styles.legalLinkText}>Privacy Policy</Text>
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -558,5 +570,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600" as const,
     color: Colors.accent,
+  },
+  legalLinks: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 24,
+    gap: 8,
+  },
+  legalLinkText: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  legalDivider: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    opacity: 0.5,
   },
 });

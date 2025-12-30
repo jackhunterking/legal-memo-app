@@ -446,6 +446,9 @@ export default function SettingsScreen() {
   // Subscription management state
   const [isManagingSubscription, setIsManagingSubscription] = useState(false);
 
+  // Account deletion state
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
   // Initialize billing values from profile
   useEffect(() => {
     if (profile) {
@@ -770,22 +773,78 @@ export default function SettingsScreen() {
     const message =
       "This will permanently delete your account and all meeting data. This action cannot be undone.";
 
-    if (Platform.OS === "web") {
-      alert(message + "\n\nPlease contact support to delete your account.");
-    } else {
-      Alert.alert("Delete Account", message, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Contact Support",
-          style: "destructive",
-          onPress: () => {
-            Alert.alert(
-              "Contact Support",
-              "Please email support@example.com to request account deletion."
-            );
+    const performAccountDeletion = async () => {
+      setIsDeletingAccount(true);
+
+      try {
+        // Get current session for authorization
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!session?.access_token) {
+          throw new Error("Not authenticated. Please sign in again.");
+        }
+
+        console.log("[Settings] Calling delete-account Edge Function...");
+        
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
           },
-        },
-      ]);
+          body: JSON.stringify({ confirmation: "DELETE" }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to delete account");
+        }
+
+        console.log("[Settings] Account deleted successfully");
+        
+        // Sign out and redirect to onboarding
+        await supabase.auth.signOut();
+        
+        Alert.alert(
+          "Account Deleted",
+          "Your account and all associated data have been permanently deleted.",
+          [
+            {
+              text: "OK",
+              onPress: () => router.replace("/onboarding"),
+            },
+          ]
+        );
+      } catch (error) {
+        console.error("[Settings] Account deletion error:", error);
+        Alert.alert(
+          "Deletion Failed",
+          error instanceof Error ? error.message : "Unable to delete account. Please try again or contact support.",
+          [{ text: "OK" }]
+        );
+      } finally {
+        setIsDeletingAccount(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (confirm(message + "\n\nAre you sure you want to proceed?")) {
+        performAccountDeletion();
+      }
+    } else {
+      Alert.alert(
+        "Delete Account",
+        message,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete My Account",
+            style: "destructive",
+            onPress: performAccountDeletion,
+          },
+        ]
+      );
     }
   };
 
@@ -1124,14 +1183,19 @@ export default function SettingsScreen() {
           <Pressable
             style={[styles.settingRow, styles.pressableRow, styles.dangerRow]}
             onPress={handleDeleteAccount}
+            disabled={isDeletingAccount}
           >
             <View style={styles.settingLeft}>
-              <Trash2 size={20} color={Colors.error} />
+              {isDeletingAccount ? (
+                <ActivityIndicator size="small" color={Colors.error} />
+              ) : (
+                <Trash2 size={20} color={Colors.error} />
+              )}
               <Text style={[styles.settingLabel, styles.dangerText]}>
-                Delete Account
+                {isDeletingAccount ? "Deleting Account..." : "Delete Account"}
               </Text>
             </View>
-            <ChevronRight size={20} color={Colors.error} />
+            {!isDeletingAccount && <ChevronRight size={20} color={Colors.error} />}
           </Pressable>
         </View>
 
