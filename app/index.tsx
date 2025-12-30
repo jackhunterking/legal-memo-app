@@ -3,6 +3,7 @@ import { View, ActivityIndicator, StyleSheet, Dimensions, Image } from "react-na
 import { useRouter, useRootNavigationState } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import Colors from "@/constants/colors";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -10,7 +11,11 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 export default function IndexScreen() {
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
-  const { isAuthenticated, hasCompletedOnboarding, isLoading } = useAuth();
+  const { isAuthenticated, hasCompletedOnboarding, isLoading: authLoading } = useAuth();
+  const { needsForceUpdate, isLoading: configLoading } = useAppConfig();
+
+  // Combined loading state
+  const isLoading = authLoading || configLoading;
 
   useEffect(() => {
     if (isLoading) return;
@@ -21,16 +26,28 @@ export default function IndexScreen() {
       return;
     }
 
-    console.log("[Index] Auth state:", { isAuthenticated, hasCompletedOnboarding });
+    console.log("[Index] Routing state:", { 
+      isAuthenticated, 
+      hasCompletedOnboarding,
+      needsForceUpdate,
+    });
 
+    // Force update takes priority over everything else
+    if (needsForceUpdate) {
+      console.log("[Index] Force update required, redirecting...");
+      router.replace("/force-update");
+      return;
+    }
+
+    // Normal routing flow
     if (!isAuthenticated) {
-      router.replace("/onboarding");
-    } else if (!hasCompletedOnboarding) {
+      // Not logged in - show onboarding intro slides
       router.replace("/onboarding");
     } else {
+      // Logged in - go directly to home
       router.replace("/(tabs)/home");
     }
-  }, [isAuthenticated, hasCompletedOnboarding, isLoading, router, rootNavigationState?.key]);
+  }, [isAuthenticated, hasCompletedOnboarding, needsForceUpdate, isLoading, router, rootNavigationState?.key]);
 
   return (
     <LinearGradient

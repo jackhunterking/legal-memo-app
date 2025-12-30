@@ -51,7 +51,8 @@ export default function AuthScreen() {
             password: credentials.encryptedPassword 
           });
           
-          router.replace("/home");
+          // Go directly to home after biometric sign in
+          router.replace("/(tabs)/home");
         } else {
           Alert.alert(
             "Setup Required",
@@ -113,7 +114,8 @@ export default function AuthScreen() {
           });
         }
         
-        router.replace("/home");
+        // Go directly to home after sign in
+        router.replace("/(tabs)/home");
       } else {
         await signUp({ email: email.trim(), password });
         router.replace({ pathname: "/email-confirmation", params: { email: email.trim() } });
